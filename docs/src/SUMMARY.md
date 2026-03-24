@@ -11,7 +11,7 @@
     - [update](commands/update.md)
     - [delete](commands/delete.md)
     - [calendar create](commands/calendar-create.md)
-    - [copy-all-events](commands/copy-all-events.md)
+    - [move-events](commands/move-events.md)
     - [auth](commands/auth.md)
     - [defconfig](commands/defconfig.md)
     - [complete](commands/complete.md)

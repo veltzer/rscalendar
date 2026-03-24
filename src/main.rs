@@ -152,8 +152,8 @@ enum Command {
         #[command(subcommand)]
         action: CalendarAction,
     },
-    /// Copy all events from one calendar to another.
-    CopyAllEvents(CopyAllEventsArgs),
+    /// Interactively move events from one calendar to another.
+    MoveEvents(MoveEventsArgs),
     /// Authenticate with Google via OAuth2 and cache the token.
     Auth(AuthArgs),
     /// Generate shell completions.
@@ -174,26 +174,30 @@ enum CalendarAction {
 }
 
 #[derive(Debug, Args)]
-struct CopyAllEventsArgs {
-    /// Source calendar name to copy events from.
+struct MoveEventsArgs {
+    /// Source calendar name to move events from.
     #[arg(long)]
     source: String,
 
-    /// Target calendar name to copy events into.
+    /// Target calendar name to move events into.
     #[arg(long)]
     target: String,
 
-    /// Shared extended property key to set on copied events.
+    /// Shared extended property key to set on moved events.
     #[arg(long)]
     property_key: Option<String>,
 
-    /// Shared extended property value to set on copied events (requires --property-key).
+    /// Shared extended property value to set on moved events (requires --property-key).
     #[arg(long)]
     property_value: Option<String>,
 
     /// Show what would be done without making changes.
     #[arg(long, default_value_t = false)]
     dry_run: bool,
+
+    /// Prompt for each event before moving (y/n/q).
+    #[arg(long, default_value_t = false)]
+    interactive: bool,
 }
 
 #[derive(Debug, Args)]
@@ -775,6 +779,22 @@ fn parse_rfc3339(input: &str) -> Result<DateTime<Utc>> {
         .with_timezone(&Utc))
 }
 
+fn prompt_yes_no_quit(message: &str) -> Result<Option<bool>> {
+    use std::io::{Write, BufRead};
+    loop {
+        eprint!("{message} [y/n/q]: ");
+        std::io::stderr().flush()?;
+        let mut line = String::new();
+        std::io::stdin().lock().read_line(&mut line)?;
+        match line.trim().to_lowercase().as_str() {
+            "y" | "yes" => return Ok(Some(true)),
+            "n" | "no" => return Ok(Some(false)),
+            "q" | "quit" => return Ok(None),
+            _ => eprintln!("  Please enter y, n, or q"),
+        }
+    }
+}
+
 fn api_error(error: reqwest::Error) -> anyhow::Error {
     if let Some(status) = error.status() {
         anyhow!("Google Calendar API request failed with status {status}")
@@ -921,7 +941,7 @@ async fn main() -> Result<()> {
                 println!("  id: {id}");
             }
         },
-        Command::CopyAllEvents(args) => {
+        Command::MoveEvents(args) => {
             if args.property_key.is_some() != args.property_value.is_some() {
                 bail!("--property-key and --property-value must be used together");
             }
@@ -935,7 +955,8 @@ async fn main() -> Result<()> {
             let source_id = source_cal
                 .id
                 .as_deref()
-                .context("source calendar has no id")?;
+                .context("source calendar has no id")?
+                .to_string();
 
             let target_cal = calendars
                 .iter()
@@ -944,23 +965,28 @@ async fn main() -> Result<()> {
             let target_id = target_cal
                 .id
                 .as_deref()
-                .context("target calendar has no id")?;
+                .context("target calendar has no id")?
+                .to_string();
 
-            println!("Migrating from '{}' to '{}'", args.source, args.target);
+            println!("Moving events from '{}' to '{}'", args.source, args.target);
             if let (Some(key), Some(value)) = (&args.property_key, &args.property_value) {
                 println!("  setting property: {key}={value}");
             }
+            if args.interactive {
+                println!("  interactive mode: y=move, n=skip, q=quit");
+            }
             println!();
 
-            let events = client.list_all_events(source_id).await?;
+            let events = client.list_all_events(&source_id).await?;
             if events.is_empty() {
                 println!("No events found in '{}'.", args.source);
                 return Ok(());
             }
 
-            println!("Found {} event(s)", events.len());
+            println!("Found {} event(s)\n", events.len());
 
-            let mut total = 0u32;
+            let mut moved = 0u32;
+            let mut skipped = 0u32;
             for event in &events {
                 let summary = event.summary.as_deref().unwrap_or("<untitled>");
                 let start = event
@@ -968,13 +994,37 @@ async fn main() -> Result<()> {
                     .as_ref()
                     .map(EventDateTime::describe)
                     .unwrap_or_else(|| "unknown".to_string());
+                let event_id = match &event.id {
+                    Some(id) => id,
+                    None => {
+                        eprintln!("  skipping event with no id: {summary}");
+                        skipped += 1;
+                        continue;
+                    }
+                };
+
+                if args.interactive {
+                    let prompt = format!("  Move '{summary}' ({start})?");
+                    match prompt_yes_no_quit(&prompt)? {
+                        Some(true) => {}
+                        Some(false) => {
+                            skipped += 1;
+                            continue;
+                        }
+                        None => {
+                            println!("\nQuit. {moved} event(s) moved, {skipped} skipped.");
+                            return Ok(());
+                        }
+                    }
+                }
 
                 if args.dry_run {
-                    print!("  [dry-run] would copy: {summary} ({start})");
+                    print!("  [dry-run] would move: {summary} ({start})");
                     if let (Some(key), Some(value)) = (&args.property_key, &args.property_value) {
                         print!(" with {key}={value}");
                     }
                     println!();
+                    moved += 1;
                 } else {
                     let mut payload = json!({
                         "summary": summary,
@@ -1001,20 +1051,21 @@ async fn main() -> Result<()> {
                         payload["location"] = json!(loc);
                     }
 
-                    client.insert_event_raw(target_id, &payload).await?;
-                    print!("  copied: {summary} ({start})");
+                    client.insert_event_raw(&target_id, &payload).await?;
+                    client.delete_event(&source_id, event_id).await?;
+                    print!("  moved: {summary} ({start})");
                     if let (Some(key), Some(value)) = (&args.property_key, &args.property_value) {
                         print!(" with {key}={value}");
                     }
                     println!();
+                    moved += 1;
                 }
-                total += 1;
             }
 
             if args.dry_run {
-                println!("\nDry run complete. {total} event(s) would be copied.");
+                println!("\nDry run complete. {moved} event(s) would be moved, {skipped} skipped.");
             } else {
-                println!("\nDone. {total} event(s) copied to '{}'.", args.target);
+                println!("\nDone. {moved} event(s) moved to '{}', {skipped} skipped.", args.target);
             }
         }
         Command::Auth(_) | Command::Complete { .. } | Command::Defconfig => unreachable!(),
