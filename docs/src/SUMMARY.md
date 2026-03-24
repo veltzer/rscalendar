@@ -11,3 +11,4 @@
     - [delete](commands/delete.md)
     - [auth](commands/auth.md)
     - [complete](commands/complete.md)
+- [Configuration](configuration.md)

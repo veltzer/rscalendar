@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-eb72961d.js";
+            window.path_to_searchindex_js = "searchindex-f70ae66c.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-f3b4fafb.js"></script>
+        <script src="toc-e651310d.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -472,6 +472,57 @@ cargo build --release
 <p>Generate and install zsh completions:</p>
 <pre><code class="language-bash">rscalendar complete zsh &gt; ~/.zfunc/_rscalendar
 </code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="configuration"><a class="header" href="#configuration">Configuration</a></h1>
+<p>rscalendar supports an optional TOML config file for setting defaults.</p>
+<h2 id="file-location"><a class="header" href="#file-location">File Location</a></h2>
+<pre><code>~/.config/rscalendar/config.toml
+</code></pre>
+<p>The config file is optional. If missing, built-in defaults are used. All config values can be overridden by CLI flags.</p>
+<h2 id="options-5"><a class="header" href="#options-5">Options</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>calendar_id</code></td><td>string</td><td><code>"primary"</code></td><td>Default calendar ID for all commands</td></tr>
+<tr><td><code>max_results</code></td><td>integer</td><td><code>10</code></td><td>Default number of events for <code>list</code></td></tr>
+<tr><td><code>no_browser</code></td><td>boolean</td><td><code>false</code></td><td>Don’t open browser during <code>auth</code></td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="example"><a class="header" href="#example">Example</a></h2>
+<pre><code class="language-toml"># Use a specific calendar by default
+calendar_id = "work@group.calendar.google.com"
+
+# Show more events by default
+max_results = 25
+
+# Always print URL instead of opening browser (headless machines)
+no_browser = true
+</code></pre>
+<h2 id="precedence"><a class="header" href="#precedence">Precedence</a></h2>
+<p>CLI flags always win over config file values:</p>
+<pre><code class="language-bash"># Uses calendar_id from config.toml
+rscalendar list
+
+# Overrides config.toml with the flag value
+rscalendar list --calendar-id "other@group.calendar.google.com"
+</code></pre>
+<h2 id="files-overview"><a class="header" href="#files-overview">Files Overview</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>File</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>~/.config/rscalendar/config.toml</code></td><td>User preferences</td></tr>
+<tr><td><code>~/.config/rscalendar/credentials.json</code></td><td>OAuth2 client credentials</td></tr>
+<tr><td><code>~/.config/rscalendar/token_cache.json</code></td><td>Cached access/refresh tokens</td></tr>
+</tbody>
+</table>
+</div>
 
                     </main>
 
