@@ -1,11 +1,11 @@
-# migrate
+# copy-all-events
 
 Copy all events from one calendar to another, optionally tagging each copied event with a shared extended property.
 
 ## Usage
 
 ```bash
-rscalendar migrate --source <NAME> --target <NAME> [OPTIONS]
+rscalendar copy-all-events --source <NAME> --target <NAME> [OPTIONS]
 ```
 
 ## Options
@@ -23,17 +23,17 @@ rscalendar migrate --source <NAME> --target <NAME> [OPTIONS]
 Preview a migration:
 
 ```bash
-rscalendar migrate --source "Client - John" --target Teaching --dry-run
+rscalendar copy-all-events --source "Client - John" --target Teaching --dry-run
 ```
 
 Copy events and tag them:
 
 ```bash
-rscalendar migrate --source "Client - John" --target Teaching --property-key client --property-value John
+rscalendar copy-all-events --source "Client - John" --target Teaching --property-key client --property-value John
 ```
 
 Copy without tagging:
 
 ```bash
-rscalendar migrate --source "Old Calendar" --target "New Calendar"
+rscalendar copy-all-events --source "Old Calendar" --target "New Calendar"
 ```

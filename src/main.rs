@@ -153,7 +153,7 @@ enum Command {
         action: CalendarAction,
     },
     /// Copy all events from one calendar to another.
-    Migrate(MigrateArgs),
+    CopyAllEvents(CopyAllEventsArgs),
     /// Authenticate with Google via OAuth2 and cache the token.
     Auth(AuthArgs),
     /// Generate shell completions.
@@ -174,7 +174,7 @@ enum CalendarAction {
 }
 
 #[derive(Debug, Args)]
-struct MigrateArgs {
+struct CopyAllEventsArgs {
     /// Source calendar name to copy events from.
     #[arg(long)]
     source: String,
@@ -921,7 +921,7 @@ async fn main() -> Result<()> {
                 println!("  id: {id}");
             }
         },
-        Command::Migrate(args) => {
+        Command::CopyAllEvents(args) => {
             if args.property_key.is_some() != args.property_value.is_some() {
                 bail!("--property-key and --property-value must be used together");
             }
