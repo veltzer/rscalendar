@@ -758,7 +758,7 @@ async fn main() -> Result<()> {
                 args.event_id, calendar_id
             );
         }
-        Command::Auth(_) | Command::Complete { .. } | Command::ListCalendars => unreachable!(),
+        Command::Auth(_) | Command::Complete { .. } => unreachable!(),
     }
 
     Ok(())

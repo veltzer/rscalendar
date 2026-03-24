@@ -5,6 +5,7 @@
 - [Getting Started](getting-started.md)
 - [Authentication](authentication.md)
 - [Commands](commands.md)
+    - [list-calendars](commands/list-calendars.md)
     - [list](commands/list.md)
     - [create](commands/create.md)
     - [update](commands/update.md)
