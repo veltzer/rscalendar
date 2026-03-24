@@ -1,4 +1,6 @@
-use std::env;
+use std::future::Future;
+use std::path::PathBuf;
+use std::pin::Pin;
 
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, Duration, NaiveDate, Utc};
@@ -8,11 +10,71 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use urlencoding::encode;
 
-const ACCESS_TOKEN_ENV: &str = "GOOGLE_CALENDAR_ACCESS_TOKEN";
-const CLIENT_ID_ENV: &str = "GOOGLE_CLIENT_ID";
-const CLIENT_SECRET_ENV: &str = "GOOGLE_CLIENT_SECRET";
 const DEFAULT_CALENDAR_ID: &str = "primary";
 const API_BASE: &str = "https://www.googleapis.com/calendar/v3";
+const CALENDAR_SCOPE: &str = "https://www.googleapis.com/auth/calendar";
+
+// --- Config paths (mirrors rscontacts) ---
+
+fn config_dir() -> PathBuf {
+    let mut dir = dirs::home_dir().expect("Could not determine home directory");
+    dir.push(".config");
+    dir.push("rscalendar");
+    std::fs::create_dir_all(&dir).expect("Could not create config directory");
+    dir
+}
+
+fn credentials_path() -> PathBuf {
+    let path = config_dir().join("credentials.json");
+    if !path.exists() {
+        eprintln!("Error: credentials.json not found at {}", path.display());
+        eprintln!("Download OAuth2 credentials from Google Cloud Console and place them there.");
+        std::process::exit(1);
+    }
+    path
+}
+
+fn token_cache_path() -> PathBuf {
+    config_dir().join("token_cache.json")
+}
+
+// --- OAuth2 flow delegates (mirrors rscontacts) ---
+
+struct NoInteractionDelegate;
+
+impl yup_oauth2::authenticator_delegate::InstalledFlowDelegate for NoInteractionDelegate {
+    fn present_user_url<'a>(
+        &'a self,
+        _url: &'a str,
+        _need_code: bool,
+    ) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'a>> {
+        Box::pin(async move {
+            Err("Not authenticated. Run 'rscalendar auth' first.".to_string())
+        })
+    }
+}
+
+struct BrowserFlowDelegate;
+
+impl yup_oauth2::authenticator_delegate::InstalledFlowDelegate for BrowserFlowDelegate {
+    fn present_user_url<'a>(
+        &'a self,
+        url: &'a str,
+        _need_code: bool,
+    ) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'a>> {
+        Box::pin(async move {
+            if let Err(e) = open::that(url) {
+                eprintln!(
+                    "Failed to open browser: {}. Please open this URL manually:\n{}",
+                    e, url
+                );
+            }
+            Ok(String::new())
+        })
+    }
+}
+
+// --- CLI ---
 
 #[derive(Debug, Parser)]
 #[command(
@@ -35,7 +97,7 @@ enum Command {
     Update(UpdateArgs),
     /// Delete an event.
     Delete(DeleteArgs),
-    /// Authenticate with Google via OAuth2 device flow and print the access token.
+    /// Authenticate with Google via OAuth2 and cache the token.
     Auth(AuthArgs),
     /// Generate shell completions.
     Complete {
@@ -137,117 +199,58 @@ struct DeleteArgs {
 
 #[derive(Debug, Args)]
 struct AuthArgs {
-    /// Google OAuth2 client ID. Falls back to GOOGLE_CLIENT_ID env var.
-    #[arg(long, env = CLIENT_ID_ENV)]
-    client_id: String,
-
-    /// Google OAuth2 client secret. Falls back to GOOGLE_CLIENT_SECRET env var.
-    #[arg(long, env = CLIENT_SECRET_ENV)]
-    client_secret: String,
-
-    /// Open the verification URL in the default browser automatically.
+    /// Print the authorization URL instead of opening the browser.
     #[arg(long, default_value_t = false)]
-    open_browser: bool,
+    no_browser: bool,
+
+    /// Force re-authentication by removing cached token first.
+    #[arg(long, default_value_t = false)]
+    force: bool,
 }
 
-#[derive(Debug, Deserialize)]
-struct DeviceCodeResponse {
-    device_code: String,
-    user_code: String,
-    verification_url: String,
-    interval: Option<u64>,
-}
+// --- Auth command (mirrors rscontacts) ---
 
-#[derive(Debug, Deserialize)]
-struct TokenResponse {
-    access_token: Option<String>,
-    refresh_token: Option<String>,
-    error: Option<String>,
-}
-
-const DEVICE_CODE_URL: &str = "https://oauth2.googleapis.com/device/code";
-const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
-const CALENDAR_SCOPE: &str = "https://www.googleapis.com/auth/calendar";
-
-async fn device_auth_flow(args: &AuthArgs) -> Result<()> {
-    let http = Client::new();
-
-    // Step 1: Request device & user codes.
-    let response: DeviceCodeResponse = http
-        .post(DEVICE_CODE_URL)
-        .form(&[
-            ("client_id", args.client_id.as_str()),
-            ("scope", CALENDAR_SCOPE),
-        ])
-        .send()
-        .await
-        .context("failed to request device code")?
-        .error_for_status()
-        .map_err(api_error)?
-        .json()
-        .await
-        .context("failed to decode device code response")?;
-
-    eprintln!("To authorize rscalendar, visit:");
-    eprintln!();
-    eprintln!("  {}", response.verification_url);
-    eprintln!();
-    eprintln!("and enter code: {}", response.user_code);
-    eprintln!();
-
-    if args.open_browser {
-        let _ = open::that(&response.verification_url);
-    }
-
-    // Step 2: Poll for the token.
-    let interval = std::time::Duration::from_secs(response.interval.unwrap_or(5));
-
-    loop {
-        tokio::time::sleep(interval).await;
-
-        let token_resp: TokenResponse = http
-            .post(TOKEN_URL)
-            .form(&[
-                ("client_id", args.client_id.as_str()),
-                ("client_secret", args.client_secret.as_str()),
-                ("device_code", response.device_code.as_str()),
-                ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
-            ])
-            .send()
-            .await
-            .context("failed to poll for token")?
-            .json()
-            .await
-            .context("failed to decode token response")?;
-
-        if let Some(access_token) = token_resp.access_token {
-            eprintln!("Authentication successful!");
-            eprintln!();
-            if let Some(refresh_token) = token_resp.refresh_token {
-                eprintln!("Refresh token (save this for long-lived access):");
-                println!("{refresh_token}");
-                eprintln!();
-                eprintln!("Access token:");
-            }
-            println!("{access_token}");
-            eprintln!();
-            eprintln!(
-                "Export it with:  export {ACCESS_TOKEN_ENV}=<access_token>"
-            );
-            return Ok(());
-        }
-
-        match token_resp.error.as_deref() {
-            Some("authorization_pending") => continue,
-            Some("slow_down") => {
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                continue;
-            }
-            Some(err) => bail!("authentication failed: {err}"),
-            None => bail!("unexpected empty token response"),
+async fn cmd_auth(args: &AuthArgs) -> Result<()> {
+    if args.force {
+        let cache = token_cache_path();
+        if cache.exists() {
+            std::fs::remove_file(&cache)?;
+            eprintln!("Removed cached token at {}", cache.display());
         }
     }
+
+    let secret = yup_oauth2::read_application_secret(credentials_path())
+        .await
+        .context("failed to read credentials.json")?;
+
+    let mut builder = yup_oauth2::InstalledFlowAuthenticator::builder(
+        secret,
+        yup_oauth2::InstalledFlowReturnMethod::HTTPRedirect,
+    )
+    .persist_tokens_to_disk(token_cache_path());
+
+    if !args.no_browser {
+        builder = builder.flow_delegate(Box::new(BrowserFlowDelegate));
+    }
+
+    let auth = builder
+        .build()
+        .await
+        .context("failed to build authenticator")?;
+
+    let _token = auth
+        .token(&[CALENDAR_SCOPE])
+        .await
+        .context("failed to obtain token")?;
+
+    eprintln!(
+        "Authentication successful. Token cached to {}",
+        token_cache_path().display()
+    );
+    Ok(())
 }
+
+// --- Google Calendar client using cached token ---
 
 #[derive(Clone)]
 struct GoogleCalendarClient {
@@ -256,12 +259,33 @@ struct GoogleCalendarClient {
 }
 
 impl GoogleCalendarClient {
-    fn from_env() -> Result<Self> {
-        let access_token = env::var(ACCESS_TOKEN_ENV).with_context(|| {
-            format!(
-                "missing required environment variable {ACCESS_TOKEN_ENV}; set it to a Google OAuth access token"
-            )
-        })?;
+    async fn from_cache() -> Result<Self> {
+        let cache_path = token_cache_path();
+        if !cache_path.exists() {
+            eprintln!("Error: not authenticated. Run 'rscalendar auth' first.");
+            std::process::exit(1);
+        }
+
+        let secret = yup_oauth2::read_application_secret(credentials_path())
+            .await
+            .context("failed to read credentials.json")?;
+
+        let auth = yup_oauth2::InstalledFlowAuthenticator::builder(
+            secret,
+            yup_oauth2::InstalledFlowReturnMethod::HTTPRedirect,
+        )
+        .persist_tokens_to_disk(cache_path)
+        .flow_delegate(Box::new(NoInteractionDelegate))
+        .build()
+        .await
+        .context("failed to build authenticator")?;
+
+        let token = auth
+            .token(&[CALENDAR_SCOPE])
+            .await
+            .context("failed to obtain access token; try running 'rscalendar auth' again")?;
+
+        let access_token = token.token().context("token has no access_token field")?.to_string();
 
         Ok(Self {
             http: Client::new(),
@@ -387,6 +411,8 @@ impl GoogleCalendarClient {
     }
 }
 
+// --- Data types ---
+
 #[derive(Debug, Deserialize)]
 struct EventListResponse {
     #[serde(default)]
@@ -422,6 +448,8 @@ impl EventDateTime {
         }
     }
 }
+
+// --- Helpers ---
 
 fn build_event_insert_payload(
     summary: &str,
@@ -566,6 +594,8 @@ fn print_event(event: &CalendarEvent) {
     println!();
 }
 
+// --- Main ---
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -576,11 +606,11 @@ async fn main() -> Result<()> {
     }
 
     if let Command::Auth(args) = &cli.command {
-        device_auth_flow(args).await?;
+        cmd_auth(args).await?;
         return Ok(());
     }
 
-    let client = GoogleCalendarClient::from_env()?;
+    let client = GoogleCalendarClient::from_cache().await?;
 
     match cli.command {
         Command::List(args) => {
