@@ -3,15 +3,13 @@ use std::path::PathBuf;
 use std::pin::Pin;
 
 use anyhow::{Context, Result, anyhow, bail};
-use chrono::{DateTime, Duration, NaiveDate, Utc};
+use chrono::{DateTime, Duration, NaiveDate};
 use clap::{Args, CommandFactory, Parser, Subcommand};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use urlencoding::encode;
 
-const DEFAULT_CALENDAR_ID: &str = "primary";
-const DEFAULT_MAX_RESULTS: u32 = 10;
 const API_BASE: &str = "https://www.googleapis.com/calendar/v3";
 const CALENDAR_SCOPE: &str = "https://www.googleapis.com/auth/calendar";
 
@@ -20,8 +18,7 @@ const CALENDAR_SCOPE: &str = "https://www.googleapis.com/auth/calendar";
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct Config {
-    calendar_id: Option<String>,
-    max_results: Option<u32>,
+    calendar_name: Option<String>,
     no_browser: Option<bool>,
 }
 
@@ -41,14 +38,6 @@ impl Config {
                 Self::default()
             }
         }
-    }
-
-    fn calendar_id(&self) -> &str {
-        self.calendar_id.as_deref().unwrap_or(DEFAULT_CALENDAR_ID)
-    }
-
-    fn max_results(&self) -> u32 {
-        self.max_results.unwrap_or(DEFAULT_MAX_RESULTS)
     }
 
     fn no_browser(&self) -> bool {
@@ -202,28 +191,16 @@ struct MoveEventsArgs {
 
 #[derive(Debug, Args)]
 struct ListArgs {
-    /// Calendar ID (default: from config or "primary").
+    /// Calendar name (default: from config).
     #[arg(long)]
-    calendar_id: Option<String>,
-
-    /// Number of events to return (default: from config or 10).
-    #[arg(long)]
-    max_results: Option<u32>,
-
-    /// Lower bound for event start times. Accepts RFC3339; defaults to now.
-    #[arg(long)]
-    time_min: Option<String>,
-
-    /// Include deleted events.
-    #[arg(long, default_value_t = false)]
-    show_deleted: bool,
+    calendar_name: Option<String>,
 }
 
 #[derive(Debug, Args)]
 struct UpsertArgs {
-    /// Calendar ID (default: from config or "primary").
+    /// Calendar name (default: from config).
     #[arg(long)]
-    calendar_id: Option<String>,
+    calendar_name: Option<String>,
 
     /// Event summary/title.
     #[arg(long)]
@@ -250,9 +227,9 @@ struct UpsertArgs {
 
 #[derive(Debug, Args)]
 struct UpdateArgs {
-    /// Calendar ID (default: from config or "primary").
+    /// Calendar name (default: from config).
     #[arg(long)]
-    calendar_id: Option<String>,
+    calendar_name: Option<String>,
 
     /// Event ID to update.
     #[arg(long)]
@@ -281,9 +258,9 @@ struct UpdateArgs {
 
 #[derive(Debug, Args)]
 struct DeleteArgs {
-    /// Calendar ID (default: from config or "primary").
+    /// Calendar name (default: from config).
     #[arg(long)]
-    calendar_id: Option<String>,
+    calendar_name: Option<String>,
 
     /// Event ID to delete.
     #[arg(long)]
@@ -502,45 +479,6 @@ impl GoogleCalendarClient {
         Ok(body.items)
     }
 
-    async fn list_events(
-        &self,
-        calendar_id: &str,
-        max_results: u32,
-        time_min: Option<&str>,
-        show_deleted: bool,
-    ) -> Result<Vec<CalendarEvent>> {
-        let time_min = match time_min {
-            Some(value) => parse_rfc3339(value)?.to_rfc3339(),
-            None => Utc::now().to_rfc3339(),
-        };
-
-        let url = format!(
-            "{}/calendars/{}/events",
-            API_BASE,
-            encode(calendar_id)
-        );
-
-        let response = self
-            .authorized(self.http.get(url))
-            .query(&[
-                ("maxResults", max_results.to_string()),
-                ("orderBy", "startTime".to_string()),
-                ("showDeleted", show_deleted.to_string()),
-                ("singleEvents", "true".to_string()),
-                ("timeMin", time_min),
-            ])
-            .send()
-            .await
-            .context("failed to call Google Calendar list events API")?;
-
-        let response = response.error_for_status().map_err(api_error)?;
-        let body: EventListResponse = response
-            .json()
-            .await
-            .context("failed to decode Google Calendar list response")?;
-        Ok(body.items)
-    }
-
     async fn create_event(&self, calendar_id: &str, args: &UpsertArgs) -> Result<CalendarEvent> {
         let payload = build_event_insert_payload(
             &args.summary,
@@ -645,12 +583,6 @@ struct CalendarListEntry {
 }
 
 #[derive(Debug, Deserialize)]
-struct EventListResponse {
-    #[serde(default)]
-    items: Vec<CalendarEvent>,
-}
-
-#[derive(Debug, Deserialize)]
 struct CalendarEvent {
     id: Option<String>,
     summary: Option<String>,
@@ -660,6 +592,16 @@ struct CalendarEvent {
     html_link: Option<String>,
     start: Option<EventDateTime>,
     end: Option<EventDateTime>,
+    #[serde(rename = "extendedProperties")]
+    extended_properties: Option<ExtendedProperties>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct ExtendedProperties {
+    #[serde(default)]
+    shared: Option<std::collections::HashMap<String, String>>,
+    #[serde(default)]
+    private: Option<std::collections::HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -773,10 +715,21 @@ fn parse_event_time(input: &str, end_of_all_day_event: bool) -> Result<EventDate
     })
 }
 
-fn parse_rfc3339(input: &str) -> Result<DateTime<Utc>> {
-    Ok(DateTime::parse_from_rfc3339(input)
-        .with_context(|| format!("failed to parse '{input}' as RFC3339"))?
-        .with_timezone(&Utc))
+fn resolve_calendar_id<'a>(
+    calendars: &'a [CalendarListEntry],
+    name: Option<&str>,
+    config: &Config,
+) -> Result<&'a str> {
+    let name = name
+        .or(config.calendar_name.as_deref())
+        .context("no calendar name specified; use --calendar-name or set calendar_name in config.toml")?;
+    let cal = calendars
+        .iter()
+        .find(|c| c.summary.as_deref() == Some(name))
+        .with_context(|| format!("no calendar named '{name}' found"))?;
+    cal.id
+        .as_deref()
+        .context("calendar has no id")
 }
 
 fn prompt_yes_no_quit(message: &str) -> Result<Option<bool>> {
@@ -856,11 +809,8 @@ async fn main() -> Result<()> {
     if let Command::Defconfig = &cli.command {
         print!(
             "\
-# Default calendar ID
-# calendar_id = \"primary\"
-
-# Default number of events to show in list
-# max_results = 10
+# Default calendar name
+# calendar_name = \"My Calendar\"
 
 # Don't open browser during auth (useful for headless machines)
 # no_browser = false
@@ -899,11 +849,9 @@ async fn main() -> Result<()> {
             }
         }
         Command::List(args) => {
-            let calendar_id = args.calendar_id.as_deref().unwrap_or(config.calendar_id());
-            let max_results = args.max_results.unwrap_or(config.max_results());
-            let events = client
-                .list_events(calendar_id, max_results, args.time_min.as_deref(), args.show_deleted)
-                .await?;
+            let calendars = client.list_calendars().await?;
+            let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), &config)?;
+            let events = client.list_all_events(calendar_id).await?;
 
             if events.is_empty() {
                 println!("No events found.");
@@ -914,24 +862,24 @@ async fn main() -> Result<()> {
             }
         }
         Command::Create(args) => {
-            let calendar_id = args.calendar_id.as_deref().unwrap_or(config.calendar_id());
+            let calendars = client.list_calendars().await?;
+            let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), &config)?;
             let event = client.create_event(calendar_id, &args).await?;
             println!("Created event:");
             print_event(&event);
         }
         Command::Update(args) => {
-            let calendar_id = args.calendar_id.as_deref().unwrap_or(config.calendar_id());
+            let calendars = client.list_calendars().await?;
+            let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), &config)?;
             let event = client.update_event(calendar_id, &args).await?;
             println!("Updated event:");
             print_event(&event);
         }
         Command::Delete(args) => {
-            let calendar_id = args.calendar_id.as_deref().unwrap_or(config.calendar_id());
+            let calendars = client.list_calendars().await?;
+            let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), &config)?;
             client.delete_event(calendar_id, &args.event_id).await?;
-            println!(
-                "Deleted event '{}' from calendar '{}'.",
-                args.event_id, calendar_id
-            );
+            println!("Deleted event '{}'.", args.event_id);
         }
         Command::Calendar { action } => match action {
             CalendarAction::Create { name } => {

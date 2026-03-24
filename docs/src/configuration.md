@@ -14,18 +14,14 @@ The config file is optional. If missing, built-in defaults are used. All config 
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `calendar_id` | string | `"primary"` | Default calendar ID for all commands |
-| `max_results` | integer | `10` | Default number of events for `list` |
+| `calendar_name` | string | (none) | Default calendar name for all commands |
 | `no_browser` | boolean | `false` | Don't open browser during `auth` |
 
 ## Example
 
 ```toml
 # Use a specific calendar by default
-calendar_id = "work@group.calendar.google.com"
-
-# Show more events by default
-max_results = 25
+calendar_name = "Teaching"
 
 # Always print URL instead of opening browser (headless machines)
 no_browser = true
@@ -36,11 +32,11 @@ no_browser = true
 CLI flags always win over config file values:
 
 ```bash
-# Uses calendar_id from config.toml
+# Uses calendar_name from config.toml
 rscalendar list
 
 # Overrides config.toml with the flag value
-rscalendar list --calendar-id "other@group.calendar.google.com"
+rscalendar list --calendar-name "Work"
 ```
 
 ## Files Overview
