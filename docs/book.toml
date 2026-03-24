@@ -1,0 +1,14 @@
+[book]
+authors = ["Mark Veltzer"]
+language = "en"
+src = "src"
+title = "rscalendar - Google Calendar CLI Tool"
+
+[build]
+build-dir = "book"
+
+[output.html]
+default-theme = "rust"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/veltzer/rscalendar"
+edit-url-template = "https://github.com/veltzer/rscalendar/edit/master/docs/{path}"
