@@ -11,8 +11,50 @@ use serde_json::{Map, Value, json};
 use urlencoding::encode;
 
 const DEFAULT_CALENDAR_ID: &str = "primary";
+const DEFAULT_MAX_RESULTS: u32 = 10;
 const API_BASE: &str = "https://www.googleapis.com/calendar/v3";
 const CALENDAR_SCOPE: &str = "https://www.googleapis.com/auth/calendar";
+
+// --- Config file ---
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct Config {
+    calendar_id: Option<String>,
+    max_results: Option<u32>,
+    no_browser: Option<bool>,
+}
+
+impl Config {
+    fn load() -> Self {
+        let path = config_path();
+        if !path.exists() {
+            return Self::default();
+        }
+        match std::fs::read_to_string(&path) {
+            Ok(contents) => toml::from_str(&contents).unwrap_or_else(|e| {
+                eprintln!("Warning: failed to parse {}: {e}", path.display());
+                Self::default()
+            }),
+            Err(e) => {
+                eprintln!("Warning: failed to read {}: {e}", path.display());
+                Self::default()
+            }
+        }
+    }
+
+    fn calendar_id(&self) -> &str {
+        self.calendar_id.as_deref().unwrap_or(DEFAULT_CALENDAR_ID)
+    }
+
+    fn max_results(&self) -> u32 {
+        self.max_results.unwrap_or(DEFAULT_MAX_RESULTS)
+    }
+
+    fn no_browser(&self) -> bool {
+        self.no_browser.unwrap_or(false)
+    }
+}
 
 // --- Config paths (mirrors rscontacts) ---
 
@@ -22,6 +64,10 @@ fn config_dir() -> PathBuf {
     dir.push("rscalendar");
     std::fs::create_dir_all(&dir).expect("Could not create config directory");
     dir
+}
+
+fn config_path() -> PathBuf {
+    config_dir().join("config.toml")
 }
 
 fn credentials_path() -> PathBuf {
@@ -109,13 +155,13 @@ enum Command {
 
 #[derive(Debug, Args)]
 struct ListArgs {
-    /// Calendar ID. Defaults to the authenticated user's primary calendar.
-    #[arg(long, default_value = DEFAULT_CALENDAR_ID)]
-    calendar_id: String,
+    /// Calendar ID (default: from config or "primary").
+    #[arg(long)]
+    calendar_id: Option<String>,
 
-    /// Number of events to return.
-    #[arg(long, default_value_t = 10)]
-    max_results: u32,
+    /// Number of events to return (default: from config or 10).
+    #[arg(long)]
+    max_results: Option<u32>,
 
     /// Lower bound for event start times. Accepts RFC3339; defaults to now.
     #[arg(long)]
@@ -128,9 +174,9 @@ struct ListArgs {
 
 #[derive(Debug, Args)]
 struct UpsertArgs {
-    /// Calendar ID. Defaults to the authenticated user's primary calendar.
-    #[arg(long, default_value = DEFAULT_CALENDAR_ID)]
-    calendar_id: String,
+    /// Calendar ID (default: from config or "primary").
+    #[arg(long)]
+    calendar_id: Option<String>,
 
     /// Event summary/title.
     #[arg(long)]
@@ -157,9 +203,9 @@ struct UpsertArgs {
 
 #[derive(Debug, Args)]
 struct UpdateArgs {
-    /// Calendar ID. Defaults to the authenticated user's primary calendar.
-    #[arg(long, default_value = DEFAULT_CALENDAR_ID)]
-    calendar_id: String,
+    /// Calendar ID (default: from config or "primary").
+    #[arg(long)]
+    calendar_id: Option<String>,
 
     /// Event ID to update.
     #[arg(long)]
@@ -188,9 +234,9 @@ struct UpdateArgs {
 
 #[derive(Debug, Args)]
 struct DeleteArgs {
-    /// Calendar ID. Defaults to the authenticated user's primary calendar.
-    #[arg(long, default_value = DEFAULT_CALENDAR_ID)]
-    calendar_id: String,
+    /// Calendar ID (default: from config or "primary").
+    #[arg(long)]
+    calendar_id: Option<String>,
 
     /// Event ID to delete.
     #[arg(long)]
@@ -210,7 +256,7 @@ struct AuthArgs {
 
 // --- Auth command (mirrors rscontacts) ---
 
-async fn cmd_auth(args: &AuthArgs) -> Result<()> {
+async fn cmd_auth(args: &AuthArgs, config: &Config) -> Result<()> {
     if args.force {
         let cache = token_cache_path();
         if cache.exists() {
@@ -229,7 +275,8 @@ async fn cmd_auth(args: &AuthArgs) -> Result<()> {
     )
     .persist_tokens_to_disk(token_cache_path());
 
-    if !args.no_browser {
+    let no_browser = args.no_browser || config.no_browser();
+    if !no_browser {
         builder = builder.flow_delegate(Box::new(BrowserFlowDelegate));
     }
 
@@ -293,8 +340,14 @@ impl GoogleCalendarClient {
         })
     }
 
-    async fn list_events(&self, args: &ListArgs) -> Result<Vec<CalendarEvent>> {
-        let time_min = match &args.time_min {
+    async fn list_events(
+        &self,
+        calendar_id: &str,
+        max_results: u32,
+        time_min: Option<&str>,
+        show_deleted: bool,
+    ) -> Result<Vec<CalendarEvent>> {
+        let time_min = match time_min {
             Some(value) => parse_rfc3339(value)?.to_rfc3339(),
             None => Utc::now().to_rfc3339(),
         };
@@ -302,15 +355,15 @@ impl GoogleCalendarClient {
         let url = format!(
             "{}/calendars/{}/events",
             API_BASE,
-            encode(&args.calendar_id)
+            encode(calendar_id)
         );
 
         let response = self
             .authorized(self.http.get(url))
             .query(&[
-                ("maxResults", args.max_results.to_string()),
+                ("maxResults", max_results.to_string()),
                 ("orderBy", "startTime".to_string()),
-                ("showDeleted", args.show_deleted.to_string()),
+                ("showDeleted", show_deleted.to_string()),
                 ("singleEvents", "true".to_string()),
                 ("timeMin", time_min),
             ])
@@ -326,7 +379,7 @@ impl GoogleCalendarClient {
         Ok(body.items)
     }
 
-    async fn create_event(&self, args: &UpsertArgs) -> Result<CalendarEvent> {
+    async fn create_event(&self, calendar_id: &str, args: &UpsertArgs) -> Result<CalendarEvent> {
         let payload = build_event_insert_payload(
             &args.summary,
             &args.start,
@@ -337,7 +390,7 @@ impl GoogleCalendarClient {
         let url = format!(
             "{}/calendars/{}/events",
             API_BASE,
-            encode(&args.calendar_id)
+            encode(calendar_id)
         );
 
         let response = self
@@ -354,7 +407,7 @@ impl GoogleCalendarClient {
             .context("failed to decode created event response")
     }
 
-    async fn update_event(&self, args: &UpdateArgs) -> Result<CalendarEvent> {
+    async fn update_event(&self, calendar_id: &str, args: &UpdateArgs) -> Result<CalendarEvent> {
         let payload = build_event_patch_payload(
             args.summary.as_deref(),
             args.start.as_deref(),
@@ -370,7 +423,7 @@ impl GoogleCalendarClient {
         let url = format!(
             "{}/calendars/{}/events/{}",
             API_BASE,
-            encode(&args.calendar_id),
+            encode(calendar_id),
             encode(&args.event_id)
         );
 
@@ -388,12 +441,12 @@ impl GoogleCalendarClient {
             .context("failed to decode updated event response")
     }
 
-    async fn delete_event(&self, args: &DeleteArgs) -> Result<()> {
+    async fn delete_event(&self, calendar_id: &str, event_id: &str) -> Result<()> {
         let url = format!(
             "{}/calendars/{}/events/{}",
             API_BASE,
-            encode(&args.calendar_id),
-            encode(&args.event_id)
+            encode(calendar_id),
+            encode(event_id)
         );
 
         self.authorized(self.http.delete(url))
@@ -599,6 +652,7 @@ fn print_event(event: &CalendarEvent) {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    let config = Config::load();
 
     if let Command::Complete { shell } = &cli.command {
         clap_complete::generate(*shell, &mut Cli::command(), "rscalendar", &mut std::io::stdout());
@@ -606,7 +660,7 @@ async fn main() -> Result<()> {
     }
 
     if let Command::Auth(args) = &cli.command {
-        cmd_auth(args).await?;
+        cmd_auth(args, &config).await?;
         return Ok(());
     }
 
@@ -614,7 +668,11 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Command::List(args) => {
-            let events = client.list_events(&args).await?;
+            let calendar_id = args.calendar_id.as_deref().unwrap_or(config.calendar_id());
+            let max_results = args.max_results.unwrap_or(config.max_results());
+            let events = client
+                .list_events(calendar_id, max_results, args.time_min.as_deref(), args.show_deleted)
+                .await?;
 
             if events.is_empty() {
                 println!("No events found.");
@@ -625,20 +683,23 @@ async fn main() -> Result<()> {
             }
         }
         Command::Create(args) => {
-            let event = client.create_event(&args).await?;
+            let calendar_id = args.calendar_id.as_deref().unwrap_or(config.calendar_id());
+            let event = client.create_event(calendar_id, &args).await?;
             println!("Created event:");
             print_event(&event);
         }
         Command::Update(args) => {
-            let event = client.update_event(&args).await?;
+            let calendar_id = args.calendar_id.as_deref().unwrap_or(config.calendar_id());
+            let event = client.update_event(calendar_id, &args).await?;
             println!("Updated event:");
             print_event(&event);
         }
         Command::Delete(args) => {
-            client.delete_event(&args).await?;
+            let calendar_id = args.calendar_id.as_deref().unwrap_or(config.calendar_id());
+            client.delete_event(calendar_id, &args.event_id).await?;
             println!(
                 "Deleted event '{}' from calendar '{}'.",
-                args.event_id, args.calendar_id
+                args.event_id, calendar_id
             );
         }
         Command::Auth(_) | Command::Complete { .. } => unreachable!(),
