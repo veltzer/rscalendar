@@ -9,6 +9,8 @@ use serde_json::{Map, Value, json};
 use urlencoding::encode;
 
 const ACCESS_TOKEN_ENV: &str = "GOOGLE_CALENDAR_ACCESS_TOKEN";
+const CLIENT_ID_ENV: &str = "GOOGLE_CLIENT_ID";
+const CLIENT_SECRET_ENV: &str = "GOOGLE_CLIENT_SECRET";
 const DEFAULT_CALENDAR_ID: &str = "primary";
 const API_BASE: &str = "https://www.googleapis.com/calendar/v3";
 
@@ -33,6 +35,8 @@ enum Command {
     Update(UpdateArgs),
     /// Delete an event.
     Delete(DeleteArgs),
+    /// Authenticate with Google via OAuth2 device flow and print the access token.
+    Auth(AuthArgs),
     /// Generate shell completions.
     Complete {
         /// Shell to generate completions for.
@@ -129,6 +133,120 @@ struct DeleteArgs {
     /// Event ID to delete.
     #[arg(long)]
     event_id: String,
+}
+
+#[derive(Debug, Args)]
+struct AuthArgs {
+    /// Google OAuth2 client ID. Falls back to GOOGLE_CLIENT_ID env var.
+    #[arg(long, env = CLIENT_ID_ENV)]
+    client_id: String,
+
+    /// Google OAuth2 client secret. Falls back to GOOGLE_CLIENT_SECRET env var.
+    #[arg(long, env = CLIENT_SECRET_ENV)]
+    client_secret: String,
+
+    /// Open the verification URL in the default browser automatically.
+    #[arg(long, default_value_t = false)]
+    open_browser: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeviceCodeResponse {
+    device_code: String,
+    user_code: String,
+    verification_url: String,
+    interval: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TokenResponse {
+    access_token: Option<String>,
+    refresh_token: Option<String>,
+    error: Option<String>,
+}
+
+const DEVICE_CODE_URL: &str = "https://oauth2.googleapis.com/device/code";
+const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
+const CALENDAR_SCOPE: &str = "https://www.googleapis.com/auth/calendar";
+
+async fn device_auth_flow(args: &AuthArgs) -> Result<()> {
+    let http = Client::new();
+
+    // Step 1: Request device & user codes.
+    let response: DeviceCodeResponse = http
+        .post(DEVICE_CODE_URL)
+        .form(&[
+            ("client_id", args.client_id.as_str()),
+            ("scope", CALENDAR_SCOPE),
+        ])
+        .send()
+        .await
+        .context("failed to request device code")?
+        .error_for_status()
+        .map_err(api_error)?
+        .json()
+        .await
+        .context("failed to decode device code response")?;
+
+    eprintln!("To authorize rscalendar, visit:");
+    eprintln!();
+    eprintln!("  {}", response.verification_url);
+    eprintln!();
+    eprintln!("and enter code: {}", response.user_code);
+    eprintln!();
+
+    if args.open_browser {
+        let _ = open::that(&response.verification_url);
+    }
+
+    // Step 2: Poll for the token.
+    let interval = std::time::Duration::from_secs(response.interval.unwrap_or(5));
+
+    loop {
+        tokio::time::sleep(interval).await;
+
+        let token_resp: TokenResponse = http
+            .post(TOKEN_URL)
+            .form(&[
+                ("client_id", args.client_id.as_str()),
+                ("client_secret", args.client_secret.as_str()),
+                ("device_code", response.device_code.as_str()),
+                ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+            ])
+            .send()
+            .await
+            .context("failed to poll for token")?
+            .json()
+            .await
+            .context("failed to decode token response")?;
+
+        if let Some(access_token) = token_resp.access_token {
+            eprintln!("Authentication successful!");
+            eprintln!();
+            if let Some(refresh_token) = token_resp.refresh_token {
+                eprintln!("Refresh token (save this for long-lived access):");
+                println!("{refresh_token}");
+                eprintln!();
+                eprintln!("Access token:");
+            }
+            println!("{access_token}");
+            eprintln!();
+            eprintln!(
+                "Export it with:  export {ACCESS_TOKEN_ENV}=<access_token>"
+            );
+            return Ok(());
+        }
+
+        match token_resp.error.as_deref() {
+            Some("authorization_pending") => continue,
+            Some("slow_down") => {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                continue;
+            }
+            Some(err) => bail!("authentication failed: {err}"),
+            None => bail!("unexpected empty token response"),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -457,6 +575,11 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    if let Command::Auth(args) = &cli.command {
+        device_auth_flow(args).await?;
+        return Ok(());
+    }
+
     let client = GoogleCalendarClient::from_env()?;
 
     match cli.command {
@@ -488,7 +611,7 @@ async fn main() -> Result<()> {
                 args.event_id, args.calendar_id
             );
         }
-        Command::Complete { .. } => unreachable!(),
+        Command::Auth(_) | Command::Complete { .. } => unreachable!(),
     }
 
     Ok(())
