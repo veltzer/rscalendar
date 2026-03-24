@@ -1,44 +1,39 @@
 # migrate
 
-Copy events from calendars matching a name prefix into a target calendar, tagging each event with the original client name as a shared extended property.
+Copy all events from one calendar to another, optionally tagging each copied event with a shared extended property.
 
 ## Usage
 
 ```bash
-rscalendar migrate --target <CALENDAR_ID> [OPTIONS]
+rscalendar migrate --source <NAME> --target <NAME> [OPTIONS]
 ```
 
 ## Options
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--target <ID>` | (required) | Target calendar ID to copy events into |
-| `--prefix <PREFIX>` | `"Client - "` | Source calendar name prefix to match |
-| `--dry-run` | `false` | Show what would be done without making changes |
-
-## How It Works
-
-1. Lists all calendars and filters those whose name starts with `--prefix` (default: `"Client - "`)
-2. For each matching calendar, lists all events
-3. Copies each event to the target calendar, preserving summary, start, end, description, and location
-4. Sets the `client` shared extended property to the part of the calendar name after the prefix (e.g. for "Client - John", the `client` property is set to `"John"`)
+| Option | Required | Description |
+|--------|----------|-------------|
+| `--source <NAME>` | Yes | Source calendar name to copy events from |
+| `--target <NAME>` | Yes | Target calendar name to copy events into |
+| `--property-key <KEY>` | No | Shared extended property key to set on copied events |
+| `--property-value <VALUE>` | No | Shared extended property value (requires `--property-key`) |
+| `--dry-run` | No | Show what would be done without making changes |
 
 ## Examples
 
-Preview what would happen:
+Preview a migration:
 
 ```bash
-rscalendar migrate --target abc123@group.calendar.google.com --dry-run
+rscalendar migrate --source "Client - John" --target Teaching --dry-run
 ```
 
-Run the migration:
+Copy events and tag them:
 
 ```bash
-rscalendar migrate --target abc123@group.calendar.google.com
+rscalendar migrate --source "Client - John" --target Teaching --property-key client --property-value John
 ```
 
-Use a different prefix:
+Copy without tagging:
 
 ```bash
-rscalendar migrate --target abc123@group.calendar.google.com --prefix "Student - "
+rscalendar migrate --source "Old Calendar" --target "New Calendar"
 ```

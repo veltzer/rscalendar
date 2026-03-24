@@ -152,7 +152,7 @@ enum Command {
         #[command(subcommand)]
         action: CalendarAction,
     },
-    /// Migrate events from "Client - *" calendars to a target calendar.
+    /// Copy all events from one calendar to another.
     Migrate(MigrateArgs),
     /// Authenticate with Google via OAuth2 and cache the token.
     Auth(AuthArgs),
@@ -175,13 +175,21 @@ enum CalendarAction {
 
 #[derive(Debug, Args)]
 struct MigrateArgs {
-    /// Target calendar ID to copy events into.
+    /// Source calendar name to copy events from.
+    #[arg(long)]
+    source: String,
+
+    /// Target calendar name to copy events into.
     #[arg(long)]
     target: String,
 
-    /// Source calendar name prefix (default: "Client - ").
-    #[arg(long, default_value = "Client - ")]
-    prefix: String,
+    /// Shared extended property key to set on copied events.
+    #[arg(long)]
+    property_key: Option<String>,
+
+    /// Shared extended property value to set on copied events (requires --property-key).
+    #[arg(long)]
+    property_value: Option<String>,
 
     /// Show what would be done without making changes.
     #[arg(long, default_value_t = false)]
@@ -914,86 +922,93 @@ async fn main() -> Result<()> {
             }
         },
         Command::Migrate(args) => {
-            let calendars = client.list_calendars().await?;
-            let matching: Vec<_> = calendars
-                .iter()
-                .filter(|c| {
-                    c.summary
-                        .as_deref()
-                        .is_some_and(|s| s.starts_with(&args.prefix))
-                })
-                .collect();
-
-            if matching.is_empty() {
-                println!("No calendars matching prefix '{}' found.", args.prefix);
-                return Ok(());
+            if args.property_key.is_some() != args.property_value.is_some() {
+                bail!("--property-key and --property-value must be used together");
             }
 
-            println!(
-                "Found {} calendar(s) matching '{}':",
-                matching.len(),
-                args.prefix
-            );
-            for cal in &matching {
-                println!("  - {}", cal.summary.as_deref().unwrap_or("<untitled>"));
+            let calendars = client.list_calendars().await?;
+
+            let source_cal = calendars
+                .iter()
+                .find(|c| c.summary.as_deref() == Some(&args.source))
+                .context(format!("no calendar named '{}' found", args.source))?;
+            let source_id = source_cal
+                .id
+                .as_deref()
+                .context("source calendar has no id")?;
+
+            let target_cal = calendars
+                .iter()
+                .find(|c| c.summary.as_deref() == Some(&args.target))
+                .context(format!("no calendar named '{}' found", args.target))?;
+            let target_id = target_cal
+                .id
+                .as_deref()
+                .context("target calendar has no id")?;
+
+            println!("Migrating from '{}' to '{}'", args.source, args.target);
+            if let (Some(key), Some(value)) = (&args.property_key, &args.property_value) {
+                println!("  setting property: {key}={value}");
             }
             println!();
 
+            let events = client.list_all_events(source_id).await?;
+            if events.is_empty() {
+                println!("No events found in '{}'.", args.source);
+                return Ok(());
+            }
+
+            println!("Found {} event(s)", events.len());
+
             let mut total = 0u32;
-            for cal in &matching {
-                let cal_id = match &cal.id {
-                    Some(id) => id,
-                    None => continue,
-                };
-                let cal_name = cal.summary.as_deref().unwrap_or("<untitled>");
-                let client_name = cal_name.strip_prefix(&args.prefix).unwrap_or(cal_name);
+            for event in &events {
+                let summary = event.summary.as_deref().unwrap_or("<untitled>");
+                let start = event
+                    .start
+                    .as_ref()
+                    .map(EventDateTime::describe)
+                    .unwrap_or_else(|| "unknown".to_string());
 
-                let events = client.list_all_events(cal_id).await?;
-                if events.is_empty() {
-                    println!("{cal_name}: no events");
-                    continue;
-                }
+                if args.dry_run {
+                    print!("  [dry-run] would copy: {summary} ({start})");
+                    if let (Some(key), Some(value)) = (&args.property_key, &args.property_value) {
+                        print!(" with {key}={value}");
+                    }
+                    println!();
+                } else {
+                    let mut payload = json!({
+                        "summary": summary,
+                    });
 
-                println!("{cal_name}: {} event(s)", events.len());
-
-                for event in &events {
-                    let summary = event.summary.as_deref().unwrap_or("<untitled>");
-                    let start = event
-                        .start
-                        .as_ref()
-                        .map(EventDateTime::describe)
-                        .unwrap_or_else(|| "unknown".to_string());
-
-                    if args.dry_run {
-                        println!("  [dry-run] would copy: {summary} ({start}) with client={client_name}");
-                    } else {
-                        let mut payload = json!({
-                            "summary": summary,
-                            "extendedProperties": {
-                                "shared": {
-                                    "client": client_name
-                                }
+                    if let (Some(key), Some(value)) = (&args.property_key, &args.property_value) {
+                        payload["extendedProperties"] = json!({
+                            "shared": {
+                                key: value
                             }
                         });
-
-                        if let Some(start) = &event.start {
-                            payload["start"] = serde_json::to_value(start)?;
-                        }
-                        if let Some(end) = &event.end {
-                            payload["end"] = serde_json::to_value(end)?;
-                        }
-                        if let Some(desc) = &event.description {
-                            payload["description"] = json!(desc);
-                        }
-                        if let Some(loc) = &event.location {
-                            payload["location"] = json!(loc);
-                        }
-
-                        client.insert_event_raw(&args.target, &payload).await?;
-                        println!("  copied: {summary} ({start}) with client={client_name}");
                     }
-                    total += 1;
+
+                    if let Some(start) = &event.start {
+                        payload["start"] = serde_json::to_value(start)?;
+                    }
+                    if let Some(end) = &event.end {
+                        payload["end"] = serde_json::to_value(end)?;
+                    }
+                    if let Some(desc) = &event.description {
+                        payload["description"] = json!(desc);
+                    }
+                    if let Some(loc) = &event.location {
+                        payload["location"] = json!(loc);
+                    }
+
+                    client.insert_event_raw(target_id, &payload).await?;
+                    print!("  copied: {summary} ({start})");
+                    if let (Some(key), Some(value)) = (&args.property_key, &args.property_value) {
+                        print!(" with {key}={value}");
+                    }
+                    println!();
                 }
+                total += 1;
             }
 
             if args.dry_run {
