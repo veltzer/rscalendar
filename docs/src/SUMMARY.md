@@ -14,3 +14,4 @@
     - [defconfig](commands/defconfig.md)
     - [complete](commands/complete.md)
 - [Configuration](configuration.md)
+- [Design Decisions](design-decisions.md)
