@@ -147,6 +147,13 @@ enum Command {
     Update(UpdateArgs),
     /// Delete an event.
     Delete(DeleteArgs),
+    /// Manage calendars.
+    Calendar {
+        #[command(subcommand)]
+        action: CalendarAction,
+    },
+    /// Migrate events from "Client - *" calendars to a target calendar.
+    Migrate(MigrateArgs),
     /// Authenticate with Google via OAuth2 and cache the token.
     Auth(AuthArgs),
     /// Generate shell completions.
@@ -155,6 +162,30 @@ enum Command {
         #[arg(value_enum)]
         shell: clap_complete::Shell,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum CalendarAction {
+    /// Create a new public calendar.
+    Create {
+        /// Name of the calendar to create.
+        name: String,
+    },
+}
+
+#[derive(Debug, Args)]
+struct MigrateArgs {
+    /// Target calendar ID to copy events into.
+    #[arg(long)]
+    target: String,
+
+    /// Source calendar name prefix (default: "Client - ").
+    #[arg(long, default_value = "Client - ")]
+    prefix: String,
+
+    /// Show what would be done without making changes.
+    #[arg(long, default_value_t = false)]
+    dry_run: bool,
 }
 
 #[derive(Debug, Args)]
@@ -342,6 +373,104 @@ impl GoogleCalendarClient {
             http: Client::new(),
             access_token,
         })
+    }
+
+    async fn create_calendar(&self, summary: &str) -> Result<Value> {
+        let url = format!("{}/calendars", API_BASE);
+        let response = self
+            .authorized(self.http.post(&url))
+            .json(&json!({ "summary": summary }))
+            .send()
+            .await
+            .context("failed to create calendar")?;
+        let response = response.error_for_status().map_err(api_error)?;
+        let calendar: Value = response.json().await.context("failed to decode created calendar")?;
+
+        // Make the calendar public by inserting an ACL rule
+        let cal_id = calendar["id"].as_str().context("created calendar has no id")?;
+        let acl_url = format!("{}/calendars/{}/acl", API_BASE, encode(cal_id));
+        self.authorized(self.http.post(&acl_url))
+            .json(&json!({
+                "role": "reader",
+                "scope": { "type": "default" }
+            }))
+            .send()
+            .await
+            .context("failed to set calendar ACL")?
+            .error_for_status()
+            .map_err(api_error)?;
+
+        Ok(calendar)
+    }
+
+    async fn list_all_events(&self, calendar_id: &str) -> Result<Vec<CalendarEvent>> {
+        let mut all_events = Vec::new();
+        let mut page_token: Option<String> = None;
+
+        loop {
+            let url = format!(
+                "{}/calendars/{}/events",
+                API_BASE,
+                encode(calendar_id)
+            );
+
+            let mut request = self
+                .authorized(self.http.get(url))
+                .query(&[
+                    ("maxResults", "2500"),
+                    ("singleEvents", "true"),
+                    ("orderBy", "startTime"),
+                ]);
+
+            if let Some(token) = &page_token {
+                request = request.query(&[("pageToken", token.as_str())]);
+            }
+
+            let response = request
+                .send()
+                .await
+                .context("failed to call Google Calendar list events API")?;
+
+            let response = response.error_for_status().map_err(api_error)?;
+            let body: Value = response
+                .json()
+                .await
+                .context("failed to decode event list response")?;
+
+            if let Some(items) = body["items"].as_array() {
+                let events: Vec<CalendarEvent> = serde_json::from_value(json!(items))
+                    .context("failed to deserialize events")?;
+                all_events.extend(events);
+            }
+
+            match body["nextPageToken"].as_str() {
+                Some(token) => page_token = Some(token.to_string()),
+                None => break,
+            }
+        }
+
+        Ok(all_events)
+    }
+
+    async fn insert_event_raw(&self, calendar_id: &str, payload: &Value) -> Result<CalendarEvent> {
+        let url = format!(
+            "{}/calendars/{}/events",
+            API_BASE,
+            encode(calendar_id)
+        );
+
+        let response = self
+            .authorized(self.http.post(url))
+            .json(payload)
+            .send()
+            .await
+            .context("failed to insert event")?;
+
+        let response = response.error_for_status().map_err(api_error)?;
+        response
+            .json()
+            .await
+            .context("failed to decode inserted event")
     }
 
     async fn list_calendars(&self) -> Result<Vec<CalendarListEntry>> {
@@ -775,6 +904,103 @@ async fn main() -> Result<()> {
                 "Deleted event '{}' from calendar '{}'.",
                 args.event_id, calendar_id
             );
+        }
+        Command::Calendar { action } => match action {
+            CalendarAction::Create { name } => {
+                let calendar = client.create_calendar(&name).await?;
+                let id = calendar["id"].as_str().unwrap_or("<unknown>");
+                println!("Created public calendar '{name}'");
+                println!("  id: {id}");
+            }
+        },
+        Command::Migrate(args) => {
+            let calendars = client.list_calendars().await?;
+            let matching: Vec<_> = calendars
+                .iter()
+                .filter(|c| {
+                    c.summary
+                        .as_deref()
+                        .is_some_and(|s| s.starts_with(&args.prefix))
+                })
+                .collect();
+
+            if matching.is_empty() {
+                println!("No calendars matching prefix '{}' found.", args.prefix);
+                return Ok(());
+            }
+
+            println!(
+                "Found {} calendar(s) matching '{}':",
+                matching.len(),
+                args.prefix
+            );
+            for cal in &matching {
+                println!("  - {}", cal.summary.as_deref().unwrap_or("<untitled>"));
+            }
+            println!();
+
+            let mut total = 0u32;
+            for cal in &matching {
+                let cal_id = match &cal.id {
+                    Some(id) => id,
+                    None => continue,
+                };
+                let cal_name = cal.summary.as_deref().unwrap_or("<untitled>");
+                let client_name = cal_name.strip_prefix(&args.prefix).unwrap_or(cal_name);
+
+                let events = client.list_all_events(cal_id).await?;
+                if events.is_empty() {
+                    println!("{cal_name}: no events");
+                    continue;
+                }
+
+                println!("{cal_name}: {} event(s)", events.len());
+
+                for event in &events {
+                    let summary = event.summary.as_deref().unwrap_or("<untitled>");
+                    let start = event
+                        .start
+                        .as_ref()
+                        .map(EventDateTime::describe)
+                        .unwrap_or_else(|| "unknown".to_string());
+
+                    if args.dry_run {
+                        println!("  [dry-run] would copy: {summary} ({start}) with client={client_name}");
+                    } else {
+                        let mut payload = json!({
+                            "summary": summary,
+                            "extendedProperties": {
+                                "shared": {
+                                    "client": client_name
+                                }
+                            }
+                        });
+
+                        if let Some(start) = &event.start {
+                            payload["start"] = serde_json::to_value(start)?;
+                        }
+                        if let Some(end) = &event.end {
+                            payload["end"] = serde_json::to_value(end)?;
+                        }
+                        if let Some(desc) = &event.description {
+                            payload["description"] = json!(desc);
+                        }
+                        if let Some(loc) = &event.location {
+                            payload["location"] = json!(loc);
+                        }
+
+                        client.insert_event_raw(&args.target, &payload).await?;
+                        println!("  copied: {summary} ({start}) with client={client_name}");
+                    }
+                    total += 1;
+                }
+            }
+
+            if args.dry_run {
+                println!("\nDry run complete. {total} event(s) would be copied.");
+            } else {
+                println!("\nDone. {total} event(s) copied to '{}'.", args.target);
+            }
         }
         Command::Auth(_) | Command::Complete { .. } | Command::Defconfig => unreachable!(),
     }

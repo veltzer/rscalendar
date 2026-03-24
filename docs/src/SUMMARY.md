@@ -10,6 +10,8 @@
     - [create](commands/create.md)
     - [update](commands/update.md)
     - [delete](commands/delete.md)
+    - [calendar create](commands/calendar-create.md)
+    - [migrate](commands/migrate.md)
     - [auth](commands/auth.md)
     - [defconfig](commands/defconfig.md)
     - [complete](commands/complete.md)
