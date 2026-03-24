@@ -987,10 +987,10 @@ async fn main() -> Result<()> {
                     });
 
                     if let (Some(key), Some(value)) = (&args.property_key, &args.property_value) {
+                        let mut shared = Map::new();
+                        shared.insert(key.clone(), json!(value));
                         payload["extendedProperties"] = json!({
-                            "shared": {
-                                key: value
-                            }
+                            "shared": shared
                         });
                     }
 
