@@ -1,25 +1,27 @@
 # Copilot Instructions for `rscalendar`
 
-## Repository state and source of truth
-
-- The repository is currently at a very early stage. The committed tree contains only `README.md`, and the current worktree also includes a staged `DESIGN.md`.
-- `README.md` is currently empty.
-- Treat `DESIGN.md` as the current product-definition document. It defines the intended scope as a Rust application that shows and changes data in Google Calendar.
-
 ## Build, test, and lint commands
 
-- No build, test, or lint commands are defined in the repository yet.
-- There is no committed `Cargo.toml`, `src/`, CI workflow, or task runner at the moment, so do not assume `cargo build`, `cargo test`, or lint targets exist until the project is bootstrapped.
-- When adding automation later, prefer documenting the exact repository-local commands here instead of inventing wrapper scripts.
+- Build: `cargo build`
+- Run the CLI locally: `cargo run -- --help`
+- Full test suite: `cargo test`
+- Single test: `cargo test parses_rfc3339_time`
+- Format: `cargo fmt`
+- Formatting check: `cargo fmt --check`
+- Lint: `cargo clippy --all-targets --all-features -- -D warnings`
 
 ## High-level architecture
 
-- The current architecture is documentation-first rather than code-first.
-- The only established application boundary is from `DESIGN.md`: this project is intended to be a Rust application that reads from and writes to Google Calendar.
-- Before implementing features, keep changes aligned with that narrow scope instead of expanding into a general calendar platform.
+- This repository is a Rust CLI for viewing and changing Google Calendar events.
+- The current implementation is a single binary crate in `src/main.rs`.
+- `clap` defines the command-line surface with four commands: `list`, `create`, `update`, and `delete`.
+- `GoogleCalendarClient` wraps the direct REST calls to Google Calendar v3 using `reqwest` and a bearer token from the `GOOGLE_CALENDAR_ACCESS_TOKEN` environment variable.
+- Request and response payloads are modeled with `serde` types in the same file, and `chrono` handles RFC3339 parsing plus date-only all-day event handling.
+- `DESIGN.md` still defines the product boundary: keep the project focused on showing and changing Google Calendar data rather than expanding it into a broader calendar system.
 
 ## Key conventions
 
-- Use the repository docs as the authoritative description of behavior until source code exists.
-- Keep future implementation choices consistent with the current stated stack: Rust for the application code and Google Calendar as the integration target.
-- Because the repository is not bootstrapped yet, future Copilot sessions should inspect the working tree before assuming standard Rust layout or commands.
+- Authentication is out of process in this first version. Do not add placeholder secrets or hardcoded tokens; the CLI expects `GOOGLE_CALENDAR_ACCESS_TOKEN` from the environment.
+- Date parsing accepts either RFC3339 timestamps or `YYYY-MM-DD`. For all-day events, the CLI treats the supplied `--end` date as inclusive and converts it to Google Calendar's exclusive end-date format before sending the API request.
+- `update` is intentionally sparse: only provided fields are patched, and calling it without any mutable fields should remain an error.
+- The repository currently keeps the CLI, API client, payload helpers, and unit tests together in `src/main.rs`; preserve that simplicity unless growth makes a split clearly worthwhile.
