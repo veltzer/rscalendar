@@ -135,6 +135,8 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// List all calendars accessible to the authenticated user.
+    ListCalendars,
     /// List upcoming events for a calendar.
     List(ListArgs),
     /// Create a new event.
@@ -340,6 +342,23 @@ impl GoogleCalendarClient {
         })
     }
 
+    async fn list_calendars(&self) -> Result<Vec<CalendarListEntry>> {
+        let url = format!("{}/users/me/calendarList", API_BASE);
+
+        let response = self
+            .authorized(self.http.get(url))
+            .send()
+            .await
+            .context("failed to call Google Calendar list calendars API")?;
+
+        let response = response.error_for_status().map_err(api_error)?;
+        let body: CalendarListResponse = response
+            .json()
+            .await
+            .context("failed to decode calendar list response")?;
+        Ok(body.items)
+    }
+
     async fn list_events(
         &self,
         calendar_id: &str,
@@ -465,6 +484,22 @@ impl GoogleCalendarClient {
 }
 
 // --- Data types ---
+
+#[derive(Debug, Deserialize)]
+struct CalendarListResponse {
+    #[serde(default)]
+    items: Vec<CalendarListEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CalendarListEntry {
+    id: Option<String>,
+    summary: Option<String>,
+    description: Option<String>,
+    primary: Option<bool>,
+    #[serde(rename = "accessRole")]
+    access_role: Option<String>,
+}
 
 #[derive(Debug, Deserialize)]
 struct EventListResponse {
@@ -667,6 +702,27 @@ async fn main() -> Result<()> {
     let client = GoogleCalendarClient::from_cache().await?;
 
     match cli.command {
+        Command::ListCalendars => {
+            let calendars = client.list_calendars().await?;
+            if calendars.is_empty() {
+                println!("No calendars found.");
+            } else {
+                for cal in &calendars {
+                    let id = cal.id.as_deref().unwrap_or("<missing-id>");
+                    let summary = cal.summary.as_deref().unwrap_or("<untitled>");
+                    let primary = if cal.primary.unwrap_or(false) { " (primary)" } else { "" };
+                    println!("{summary}{primary}");
+                    println!("  id: {id}");
+                    if let Some(role) = &cal.access_role {
+                        println!("  role: {role}");
+                    }
+                    if let Some(desc) = &cal.description {
+                        println!("  description: {desc}");
+                    }
+                    println!();
+                }
+            }
+        }
         Command::List(args) => {
             let calendar_id = args.calendar_id.as_deref().unwrap_or(config.calendar_id());
             let max_results = args.max_results.unwrap_or(config.max_results());
@@ -702,7 +758,7 @@ async fn main() -> Result<()> {
                 args.event_id, calendar_id
             );
         }
-        Command::Auth(_) | Command::Complete { .. } => unreachable!(),
+        Command::Auth(_) | Command::Complete { .. } | Command::ListCalendars => unreachable!(),
     }
 
     Ok(())
