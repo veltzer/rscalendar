@@ -135,6 +135,8 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Print the default configuration file.
+    Defconfig,
     /// List all calendars accessible to the authenticated user.
     ListCalendars,
     /// List upcoming events for a calendar.
@@ -694,6 +696,22 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    if let Command::Defconfig = &cli.command {
+        print!(
+            "\
+# Default calendar ID
+# calendar_id = \"primary\"
+
+# Default number of events to show in list
+# max_results = 10
+
+# Don't open browser during auth (useful for headless machines)
+# no_browser = false
+"
+        );
+        return Ok(());
+    }
+
     if let Command::Auth(args) = &cli.command {
         cmd_auth(args, &config).await?;
         return Ok(());
@@ -758,7 +776,7 @@ async fn main() -> Result<()> {
                 args.event_id, calendar_id
             );
         }
-        Command::Auth(_) | Command::Complete { .. } => unreachable!(),
+        Command::Auth(_) | Command::Complete { .. } | Command::Defconfig => unreachable!(),
     }
 
     Ok(())

@@ -11,5 +11,6 @@
     - [update](commands/update.md)
     - [delete](commands/delete.md)
     - [auth](commands/auth.md)
+    - [defconfig](commands/defconfig.md)
     - [complete](commands/complete.md)
 - [Configuration](configuration.md)
