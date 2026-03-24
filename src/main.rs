@@ -791,6 +791,14 @@ fn print_event(event: &CalendarEvent) {
         println!("  link: {html_link}");
     }
 
+    if let Some(props) = &event.extended_properties {
+        if let Some(shared) = &props.shared {
+            for (key, value) in shared {
+                println!("  {key}: {value}");
+            }
+        }
+    }
+
     println!();
 }
 
