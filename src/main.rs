@@ -143,6 +143,8 @@ enum Command {
         #[command(subcommand)]
         action: CalendarAction,
     },
+    /// Add a single property to events (validates against config).
+    AddProperty(AddPropertyArgs),
     /// Interactively add properties to events from the allowed values in config.
     AddProperties(AddPropertiesArgs),
     /// Check that all event properties have keys and values defined in config.
@@ -191,6 +193,29 @@ struct MoveEventsArgs {
     dry_run: bool,
 
     /// Move all events without prompting.
+    #[arg(long, default_value_t = false)]
+    all: bool,
+}
+
+#[derive(Debug, Args)]
+struct AddPropertyArgs {
+    /// Calendar name (default: from config).
+    #[arg(long)]
+    calendar_name: Option<String>,
+
+    /// Property key (must be defined in config).
+    #[arg(long)]
+    key: String,
+
+    /// Property value (must be in the allowed values for the key in config).
+    #[arg(long)]
+    value: String,
+
+    /// Apply to a single event by ID. If omitted, applies to all events.
+    #[arg(long)]
+    event_id: Option<String>,
+
+    /// Apply to all events without prompting.
     #[arg(long, default_value_t = false)]
     all: bool,
 }
@@ -970,6 +995,92 @@ async fn main() -> Result<()> {
             let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), &config)?;
             client.delete_event(calendar_id, &args.event_id).await?;
             println!("Deleted event '{}'.", args.event_id);
+        }
+        Command::AddProperty(args) => {
+            let properties = config.properties.as_ref()
+                .context("no [properties] section in config.toml")?;
+            let allowed_values = properties.get(&args.key)
+                .with_context(|| format!("key '{}' is not defined in [properties] in config.toml", args.key))?;
+            if !allowed_values.contains(&args.value) {
+                bail!(
+                    "value '{}' is not allowed for key '{}'. Allowed: {}",
+                    args.value,
+                    args.key,
+                    allowed_values.join(", ")
+                );
+            }
+
+            let calendars = client.list_calendars().await?;
+            let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), &config)?;
+
+            if let Some(event_id) = &args.event_id {
+                // Single event mode
+                let mut props = std::collections::HashMap::new();
+                props.insert(args.key.clone(), args.value.clone());
+                client.patch_event_properties(calendar_id, event_id, &props).await?;
+                println!("Set {}={} on event '{}'.", args.key, args.value, event_id);
+            } else {
+                // All events mode
+                let events = client.list_all_events(calendar_id).await?;
+                if events.is_empty() {
+                    println!("No events found.");
+                    return Ok(());
+                }
+
+                let mut updated = 0u32;
+                let mut skipped = 0u32;
+                for event in &events {
+                    let summary = event.summary.as_deref().unwrap_or("<untitled>");
+                    let start = event
+                        .start
+                        .as_ref()
+                        .map(EventDateTime::describe)
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let event_id = match &event.id {
+                        Some(id) => id,
+                        None => continue,
+                    };
+
+                    // Skip if already set to the same value
+                    let already_set = event
+                        .extended_properties
+                        .as_ref()
+                        .and_then(|p| p.shared.as_ref())
+                        .and_then(|s| s.get(&args.key))
+                        .is_some_and(|v| v == &args.value);
+                    if already_set {
+                        skipped += 1;
+                        continue;
+                    }
+
+                    if !args.all {
+                        let prompt = format!("Set {}={} on '{summary}' ({start})?", args.key, args.value);
+                        match prompt_yes_no_quit(&prompt)? {
+                            Some(true) => {}
+                            Some(false) => {
+                                skipped += 1;
+                                continue;
+                            }
+                            None => {
+                                println!("\nQuit. {updated} updated, {skipped} skipped.");
+                                return Ok(());
+                            }
+                        }
+                    }
+
+                    let mut props = event
+                        .extended_properties
+                        .as_ref()
+                        .and_then(|p| p.shared.clone())
+                        .unwrap_or_default();
+                    props.insert(args.key.clone(), args.value.clone());
+                    client.patch_event_properties(calendar_id, event_id, &props).await?;
+                    println!("  set on: {summary} ({start})");
+                    updated += 1;
+                }
+
+                println!("\nDone. {updated} updated, {skipped} skipped.");
+            }
         }
         Command::AddProperties(args) => {
             let properties = config.properties.as_ref()
