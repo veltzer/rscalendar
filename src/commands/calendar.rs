@@ -20,19 +20,12 @@ pub async fn cmd_calendar_create(client: &GoogleCalendarClient, name: &str, out:
 pub async fn cmd_calendar_delete(client: &GoogleCalendarClient, name: &str, config: &Config, out: &OutputOptions) -> Result<()> {
     let calendars = client.list_calendars().await?;
     let calendar_id = resolve_calendar_id(&calendars, Some(name), config)?;
-    use std::io::{BufRead, Write};
-    eprint!("Delete calendar '{name}'? This cannot be undone. [y/n]: ");
-    std::io::stderr().flush()?;
-    let mut line = String::new();
-    std::io::stdin().lock().read_line(&mut line)?;
-    match line.trim().to_lowercase().as_str() {
-        "y" | "yes" => {
-            client.delete_calendar(calendar_id).await?;
-            if !out.quiet { println!("Deleted calendar '{name}'."); }
-        }
-        _ => {
-            if !out.quiet { println!("Aborted."); }
-        }
+    let confirmed = crate::helpers::prompt_confirm(&format!("Delete calendar '{name}'? This cannot be undone"))?;
+    if confirmed {
+        client.delete_calendar(calendar_id).await?;
+        if !out.quiet { println!("Deleted calendar '{name}'."); }
+    } else {
+        if !out.quiet { println!("Aborted."); }
     }
     Ok(())
 }

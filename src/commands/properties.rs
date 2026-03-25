@@ -344,44 +344,35 @@ pub async fn cmd_properties_edit(client: &GoogleCalendarClient, args: &CalendarN
                 }
             }
 
-            struct MenuEntry { key: String, actions: Vec<(&'static str, &'static str)> }
-            let mut menu_entries: Vec<MenuEntry> = Vec::new();
+            let mut menu_items: Vec<String> = Vec::new();
+            let mut menu_actions: Vec<(&str, String)> = Vec::new(); // (action, key)
 
             for key in &sorted_keys {
                 if current.contains_key(*key) {
-                    menu_entries.push(MenuEntry {
-                        key: (*key).clone(),
-                        actions: vec![("c", "change"), ("d", "delete")],
-                    });
+                    menu_items.push(format!("change '{key}'"));
+                    menu_actions.push(("change", (*key).clone()));
+                    menu_items.push(format!("delete '{key}'"));
+                    menu_actions.push(("delete", (*key).clone()));
                 } else {
-                    menu_entries.push(MenuEntry {
-                        key: (*key).clone(),
-                        actions: vec![("a", "add")],
-                    });
+                    menu_items.push(format!("add '{key}'"));
+                    menu_actions.push(("add", (*key).clone()));
                 }
             }
+            menu_items.push("next event".to_string());
+            menu_items.push("quit".to_string());
 
-            eprintln!("Actions:");
-            for (i, entry) in menu_entries.iter().enumerate() {
-                let actions_str: Vec<String> = entry.actions.iter()
-                    .map(|(code, label)| format!("{code}={label}"))
-                    .collect();
-                eprintln!("{}: '{}' [{}]", i + 1, entry.key, actions_str.join(", "));
-            }
-            eprintln!("n: next event");
-            eprintln!("q: quit");
+            let selection = dialoguer::Select::new()
+                .with_prompt("Action")
+                .items(&menu_items)
+                .default(0)
+                .interact()?;
 
-            use std::io::{BufRead, Write};
-            eprint!("choice: ");
-            std::io::stderr().flush()?;
-            let mut line = String::new();
-            std::io::stdin().lock().read_line(&mut line)?;
-            let trimmed = line.trim().to_lowercase();
-
-            if trimmed == "n" || trimmed == "next" {
+            if selection == menu_items.len() - 2 {
+                // next event
                 break;
             }
-            if trimmed == "q" || trimmed == "quit" {
+            if selection == menu_items.len() - 1 {
+                // quit
                 if changed {
                     client.patch_event_properties_with_deletes(&calendar_id, event_id, &current, &deleted_keys).await?;
                     updated += 1;
@@ -391,43 +382,17 @@ pub async fn cmd_properties_edit(client: &GoogleCalendarClient, args: &CalendarN
                 return Ok(());
             }
 
-            let (num_str, action_code) = if trimmed.len() >= 2 && trimmed.as_bytes().last().unwrap().is_ascii_alphabetic() {
-                (&trimmed[..trimmed.len()-1], Some(&trimmed[trimmed.len()-1..]))
-            } else {
-                (trimmed.as_str(), None)
-            };
-
-            let idx = match num_str.parse::<usize>() {
-                Ok(n) if n >= 1 && n <= menu_entries.len() => n - 1,
-                _ => { eprintln!("invalid choice"); continue; }
-            };
-
-            let entry = &menu_entries[idx];
-            let action = if entry.actions.len() == 1 {
-                entry.actions[0].0
-            } else if let Some(code) = action_code {
-                if let Some((a, _)) = entry.actions.iter().find(|(c, _)| *c == code) {
-                    a
-                } else {
-                    eprintln!("invalid action. Use: {}", entry.actions.iter().map(|(c, l)| format!("{c}={l}")).collect::<Vec<_>>().join(", "));
-                    continue;
-                }
-            } else {
-                eprintln!("specify action: {}", entry.actions.iter().map(|(c, l)| format!("{c}={l}")).collect::<Vec<_>>().join(", "));
-                continue;
-            };
-
-            let key = &entry.key;
-            match action {
-                "a" | "c" => {
+            let (action, key) = &menu_actions[selection];
+            match *action {
+                "add" | "change" => {
                     let values = &properties[key];
-                    let prompt = format!("Select value for '{key}':");
+                    let prompt = format!("Select value for '{key}'");
                     if let Some(value) = prompt_select(&prompt, values)? {
                         current.insert(key.clone(), value);
                         changed = true;
                     }
                 }
-                "d" => {
+                "delete" => {
                     current.remove(key);
                     deleted_keys.push(key.clone());
                     changed = true;

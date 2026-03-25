@@ -73,43 +73,32 @@ pub fn parse_event_time(input: &str, end_of_all_day_event: bool) -> Result<Event
 }
 
 pub fn prompt_select(prompt: &str, options: &[String]) -> Result<Option<String>> {
-    use std::io::{BufRead, Write};
-    eprintln!("{prompt}");
-    for (i, opt) in options.iter().enumerate() {
-        eprintln!("{}: {opt}", i + 1);
-    }
-    eprintln!("s: skip this property");
-    eprint!("choice: ");
-    std::io::stderr().flush()?;
-    let mut line = String::new();
-    std::io::stdin().lock().read_line(&mut line)?;
-    let trimmed = line.trim().to_lowercase();
-    if trimmed == "s" || trimmed == "skip" {
-        return Ok(None);
-    }
-    if let Ok(n) = trimmed.parse::<usize>() {
-        if n >= 1 && n <= options.len() {
-            return Ok(Some(options[n - 1].clone()));
-        }
-    }
-    eprintln!("invalid choice, skipping");
-    Ok(None)
+    let selection = dialoguer::FuzzySelect::new()
+        .with_prompt(prompt)
+        .items(options)
+        .interact_opt()?;
+    Ok(selection.map(|i| options[i].clone()))
 }
 
 pub fn prompt_yes_no_quit(message: &str) -> Result<Option<bool>> {
-    use std::io::{BufRead, Write};
-    loop {
-        eprint!("{message} [y/n/q]: ");
-        std::io::stderr().flush()?;
-        let mut line = String::new();
-        std::io::stdin().lock().read_line(&mut line)?;
-        match line.trim().to_lowercase().as_str() {
-            "y" | "yes" => return Ok(Some(true)),
-            "n" | "no" => return Ok(Some(false)),
-            "q" | "quit" => return Ok(None),
-            _ => eprintln!("Please enter y, n, or q"),
-        }
+    let items = &["yes", "no", "quit"];
+    let selection = dialoguer::Select::new()
+        .with_prompt(message)
+        .items(items)
+        .default(0)
+        .interact()?;
+    match selection {
+        0 => Ok(Some(true)),
+        1 => Ok(Some(false)),
+        _ => Ok(None),
     }
+}
+
+pub fn prompt_confirm(message: &str) -> Result<bool> {
+    Ok(dialoguer::Confirm::new()
+        .with_prompt(message)
+        .default(false)
+        .interact()?)
 }
 
 #[cfg(test)]
