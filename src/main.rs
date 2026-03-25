@@ -1458,11 +1458,24 @@ async fn main() -> Result<()> {
 
                     let mut changed = false;
                     let mut deleted_keys: Vec<String> = Vec::new();
-
-                    eprintln!("\nEvent: {summary} ({start})");
+                    let end = event
+                        .end
+                        .as_ref()
+                        .map(EventDateTime::describe)
+                        .unwrap_or_else(|| "unknown".to_string());
 
                     loop {
-                        // Show current state
+                        eprintln!();
+                        eprintln!("{summary}");
+                        eprintln!("  start: {start}");
+                        eprintln!("  end:   {end}");
+                        if let Some(location) = &event.location {
+                            eprintln!("  location: {location}");
+                        }
+                        if let Some(description) = &event.description {
+                            eprintln!("  description: {description}");
+                        }
+                        // Show current properties
                         if current.is_empty() && deleted_keys.is_empty() {
                             eprintln!("  (no properties)");
                         } else {
@@ -1479,25 +1492,30 @@ async fn main() -> Result<()> {
                             }
                         }
 
-                        // Build menu
-                        let mut menu_items: Vec<String> = Vec::new();
-                        let mut menu_actions: Vec<(&str, &str)> = Vec::new(); // (action, key)
+                        // Build menu: one line per key with applicable actions
+                        struct MenuEntry { key: String, actions: Vec<(&'static str, &'static str)> } // (code, label)
+                        let mut menu_entries: Vec<MenuEntry> = Vec::new();
 
                         for key in &sorted_keys {
                             if current.contains_key(*key) {
-                                menu_items.push(format!("change '{key}'"));
-                                menu_actions.push(("change", key));
-                                menu_items.push(format!("delete '{key}'"));
-                                menu_actions.push(("delete", key));
+                                menu_entries.push(MenuEntry {
+                                    key: (*key).clone(),
+                                    actions: vec![("c", "change"), ("d", "delete")],
+                                });
                             } else {
-                                menu_items.push(format!("add '{key}'"));
-                                menu_actions.push(("add", key));
+                                menu_entries.push(MenuEntry {
+                                    key: (*key).clone(),
+                                    actions: vec![("a", "add")],
+                                });
                             }
                         }
 
                         eprintln!("  Actions:");
-                        for (i, item) in menu_items.iter().enumerate() {
-                            eprintln!("    {}: {item}", i + 1);
+                        for (i, entry) in menu_entries.iter().enumerate() {
+                            let actions_str: Vec<String> = entry.actions.iter()
+                                .map(|(code, label)| format!("{code}={label}"))
+                                .collect();
+                            eprintln!("    {}: '{}' [{}]", i + 1, entry.key, actions_str.join(", "));
                         }
                         eprintln!("    n: next event");
                         eprintln!("    q: quit");
@@ -1543,27 +1561,53 @@ async fn main() -> Result<()> {
                             return Ok(());
                         }
 
-                        let choice = match trimmed.parse::<usize>() {
-                            Ok(n) if n >= 1 && n <= menu_actions.len() => n - 1,
+                        // Parse input: "<number><action>" e.g. "1a", "2c", "3d"
+                        // or just "<number>" if there's only one action
+                        let (num_str, action_code) = if trimmed.len() >= 2 && trimmed.as_bytes().last().unwrap().is_ascii_alphabetic() {
+                            (&trimmed[..trimmed.len()-1], Some(&trimmed[trimmed.len()-1..]))
+                        } else {
+                            (trimmed.as_str(), None)
+                        };
+
+                        let idx = match num_str.parse::<usize>() {
+                            Ok(n) if n >= 1 && n <= menu_entries.len() => n - 1,
                             _ => {
                                 eprintln!("  invalid choice");
                                 continue;
                             }
                         };
 
-                        let (action, key) = menu_actions[choice];
+                        let entry = &menu_entries[idx];
+
+                        // Resolve the action
+                        let action = if entry.actions.len() == 1 {
+                            // Only one action available, use it regardless of input
+                            entry.actions[0].0
+                        } else if let Some(code) = action_code {
+                            if let Some((a, _)) = entry.actions.iter().find(|(c, _)| *c == code) {
+                                a
+                            } else {
+                                eprintln!("  invalid action. Use: {}", entry.actions.iter().map(|(c, l)| format!("{c}={l}")).collect::<Vec<_>>().join(", "));
+                                continue;
+                            }
+                        } else {
+                            eprintln!("  specify action: {}", entry.actions.iter().map(|(c, l)| format!("{c}={l}")).collect::<Vec<_>>().join(", "));
+                            continue;
+                        };
+
+                        let key = &entry.key;
                         match action {
-                            "add" | "change" => {
+                            "a" | "c" => {
                                 let values = &properties[key];
                                 let prompt = format!("  Select value for '{key}':");
                                 if let Some(value) = prompt_select(&prompt, values)? {
-                                    current.insert(key.to_string(), value);
+                                    current.insert(key.clone(), value);
                                     changed = true;
                                 }
                             }
-                            "delete" => {
+                            "d" => {
                                 current.remove(key);
-                                deleted_keys.push(key.to_string());
+                                deleted_keys.push(key.clone());
                                 changed = true;
                                 eprintln!("  deleted '{key}'");
                             }
