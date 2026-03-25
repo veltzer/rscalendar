@@ -214,6 +214,8 @@ enum PropertiesAction {
     Delete(PropertiesDeleteArgs),
     /// Rename a property key on events.
     Rename(PropertiesRenameArgs),
+    /// Interactively edit properties on each event via TUI menus.
+    Edit(PropertiesCalendarArgs),
 }
 
 #[derive(Debug, Args)]
@@ -1412,6 +1414,191 @@ async fn main() -> Result<()> {
                 }
 
                 println!("\nDone. {updated} renamed, {skipped} skipped.");
+            }
+            PropertiesAction::Edit(args) => {
+                let properties = config.properties.as_ref()
+                    .context("no [properties] section in config.toml")?;
+                if properties.is_empty() {
+                    bail!("no properties defined in [properties] section of config.toml");
+                }
+
+                let calendars = client.list_calendars().await?;
+                let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), &config)?;
+                let events = client.list_all_events(calendar_id).await?;
+
+                if events.is_empty() {
+                    println!("No events found.");
+                    return Ok(());
+                }
+
+                let sorted_keys: Vec<&String> = {
+                    let mut keys: Vec<_> = properties.keys().collect();
+                    keys.sort();
+                    keys
+                };
+
+                let mut updated = 0u32;
+                for event in &events {
+                    let summary = event.summary.as_deref().unwrap_or("<untitled>");
+                    let start = event
+                        .start
+                        .as_ref()
+                        .map(EventDateTime::describe)
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let event_id = match &event.id {
+                        Some(id) => id,
+                        None => continue,
+                    };
+
+                    let mut current: std::collections::HashMap<String, String> = event
+                        .extended_properties
+                        .as_ref()
+                        .and_then(|p| p.shared.clone())
+                        .unwrap_or_default();
+
+                    let mut changed = false;
+                    let mut deleted_keys: Vec<String> = Vec::new();
+
+                    eprintln!("\nEvent: {summary} ({start})");
+
+                    loop {
+                        // Show current state
+                        if current.is_empty() && deleted_keys.is_empty() {
+                            eprintln!("  (no properties)");
+                        } else {
+                            for key in &sorted_keys {
+                                if let Some(val) = current.get(*key) {
+                                    eprintln!("  {key}: {val}");
+                                }
+                            }
+                            // Show any non-config keys
+                            for (k, v) in &current {
+                                if !properties.contains_key(k) {
+                                    eprintln!("  {k}: {v} (unknown)");
+                                }
+                            }
+                        }
+
+                        // Build menu
+                        let mut menu_items: Vec<String> = Vec::new();
+                        let mut menu_actions: Vec<(&str, &str)> = Vec::new(); // (action, key)
+
+                        for key in &sorted_keys {
+                            if current.contains_key(*key) {
+                                menu_items.push(format!("change '{key}'"));
+                                menu_actions.push(("change", key));
+                                menu_items.push(format!("delete '{key}'"));
+                                menu_actions.push(("delete", key));
+                            } else {
+                                menu_items.push(format!("add '{key}'"));
+                                menu_actions.push(("add", key));
+                            }
+                        }
+
+                        eprintln!("  Actions:");
+                        for (i, item) in menu_items.iter().enumerate() {
+                            eprintln!("    {}: {item}", i + 1);
+                        }
+                        eprintln!("    n: next event");
+                        eprintln!("    q: quit");
+
+                        use std::io::{Write, BufRead};
+                        eprint!("  choice: ");
+                        std::io::stderr().flush()?;
+                        let mut line = String::new();
+                        std::io::stdin().lock().read_line(&mut line)?;
+                        let trimmed = line.trim().to_lowercase();
+
+                        if trimmed == "n" || trimmed == "next" {
+                            break;
+                        }
+                        if trimmed == "q" || trimmed == "quit" {
+                            if changed {
+                                // Apply pending changes before quitting
+                                let mut patch_shared = Map::new();
+                                for (k, v) in &current {
+                                    patch_shared.insert(k.clone(), json!(v));
+                                }
+                                for k in &deleted_keys {
+                                    patch_shared.insert(k.clone(), Value::Null);
+                                }
+                                let payload = json!({
+                                    "extendedProperties": { "shared": patch_shared }
+                                });
+                                let url = format!(
+                                    "{}/calendars/{}/events/{}",
+                                    API_BASE, encode(calendar_id), encode(event_id)
+                                );
+                                client.authorized(client.http.patch(url))
+                                    .json(&payload)
+                                    .send()
+                                    .await
+                                    .context("failed to update properties")?
+                                    .error_for_status()
+                                    .map_err(api_error)?;
+                                updated += 1;
+                                eprintln!("  saved.");
+                            }
+                            println!("\nQuit. {updated} event(s) updated.");
+                            return Ok(());
+                        }
+
+                        let choice = match trimmed.parse::<usize>() {
+                            Ok(n) if n >= 1 && n <= menu_actions.len() => n - 1,
+                            _ => {
+                                eprintln!("  invalid choice");
+                                continue;
+                            }
+                        };
+
+                        let (action, key) = menu_actions[choice];
+                        match action {
+                            "add" | "change" => {
+                                let values = &properties[key];
+                                let prompt = format!("  Select value for '{key}':");
+                                if let Some(value) = prompt_select(&prompt, values)? {
+                                    current.insert(key.to_string(), value);
+                                    changed = true;
+                                }
+                            }
+                            "delete" => {
+                                current.remove(key);
+                                deleted_keys.push(key.to_string());
+                                changed = true;
+                                eprintln!("  deleted '{key}'");
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+
+                    if changed {
+                        let mut patch_shared = Map::new();
+                        for (k, v) in &current {
+                            patch_shared.insert(k.clone(), json!(v));
+                        }
+                        for k in &deleted_keys {
+                            patch_shared.insert(k.clone(), Value::Null);
+                        }
+                        let payload = json!({
+                            "extendedProperties": { "shared": patch_shared }
+                        });
+                        let url = format!(
+                            "{}/calendars/{}/events/{}",
+                            API_BASE, encode(calendar_id), encode(event_id)
+                        );
+                        client.authorized(client.http.patch(url))
+                            .json(&payload)
+                            .send()
+                            .await
+                            .context("failed to update properties")?
+                            .error_for_status()
+                            .map_err(api_error)?;
+                        eprintln!("  saved.");
+                        updated += 1;
+                    }
+                }
+
+                println!("\nDone. {updated} event(s) updated.");
             }
         },
         Command::Calendar { action } => match action {

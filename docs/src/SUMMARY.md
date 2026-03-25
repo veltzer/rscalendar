@@ -15,6 +15,7 @@
     - [properties check](commands/properties-check.md)
     - [properties delete](commands/properties-delete.md)
     - [properties rename](commands/properties-rename.md)
+    - [properties edit](commands/properties-edit.md)
     - [move-events](commands/move-events.md)
     - [auth](commands/auth.md)
     - [defconfig](commands/defconfig.md)
