@@ -120,6 +120,14 @@ impl yup_oauth2::authenticator_delegate::InstalledFlowDelegate for BrowserFlowDe
     about = "Google Calendar CLI for listing and changing events"
 )]
 struct Cli {
+    /// Show "(built-in)" labels on standard Google Calendar fields.
+    #[arg(long, global = true, default_value_t = false)]
+    show_builtin: bool,
+
+    /// Output as JSON instead of human-readable text.
+    #[arg(long, global = true, default_value_t = false)]
+    json: bool,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -845,7 +853,42 @@ fn api_error(error: reqwest::Error) -> anyhow::Error {
     }
 }
 
-fn print_event(event: &CalendarEvent) {
+fn print_event(event: &CalendarEvent, show_builtin: bool, json_output: bool) {
+    if json_output {
+        let mut obj = Map::new();
+        if let Some(id) = &event.id {
+            obj.insert("id".to_string(), json!(id));
+        }
+        if let Some(summary) = &event.summary {
+            obj.insert("summary".to_string(), json!(summary));
+        }
+        if let Some(start) = &event.start {
+            obj.insert("start".to_string(), json!(start.describe()));
+        }
+        if let Some(end) = &event.end {
+            obj.insert("end".to_string(), json!(end.describe()));
+        }
+        if let Some(status) = &event.status {
+            obj.insert("status".to_string(), json!(status));
+        }
+        if let Some(location) = &event.location {
+            obj.insert("location".to_string(), json!(location));
+        }
+        if let Some(description) = &event.description {
+            obj.insert("description".to_string(), json!(description));
+        }
+        if let Some(html_link) = &event.html_link {
+            obj.insert("link".to_string(), json!(html_link));
+        }
+        if let Some(props) = &event.extended_properties {
+            if let Some(shared) = &props.shared {
+                obj.insert("properties".to_string(), json!(shared));
+            }
+        }
+        println!("{}", serde_json::to_string(&Value::Object(obj)).unwrap());
+        return;
+    }
+
     let id = event.id.as_deref().unwrap_or("<missing-id>");
     let summary = event.summary.as_deref().unwrap_or("<untitled>");
     let start = event
@@ -858,32 +901,36 @@ fn print_event(event: &CalendarEvent) {
         .as_ref()
         .map(EventDateTime::describe)
         .unwrap_or_else(|| "unknown".to_string());
+    let bi = if show_builtin { " (built-in)" } else { "" };
 
     println!("{summary}");
-    println!("  id: {id}");
-    println!("  start: {start}");
-    println!("  end: {end}");
+    println!("  id: {id}{bi}");
+    println!("  start: {start}{bi}");
+    println!("  end: {end}{bi}");
 
     if let Some(status) = &event.status {
-        println!("  status: {status} (built-in)");
+        println!("  status: {status}{bi}");
     }
 
     if let Some(location) = &event.location {
-        println!("  location: {location} (built-in)");
+        println!("  location: {location}{bi}");
     }
 
     if let Some(description) = &event.description {
-        println!("  description: {description} (built-in)");
+        println!("  description: {description}{bi}");
     }
 
     if let Some(html_link) = &event.html_link {
-        println!("  link: {html_link} (built-in)");
+        println!("  link: {html_link}{bi}");
     }
 
     if let Some(props) = &event.extended_properties {
         if let Some(shared) = &props.shared {
-            for (key, value) in shared {
-                println!("  {key}: {value}");
+            if !shared.is_empty() {
+                println!("  ---");
+                for (key, value) in shared {
+                    println!("  {key}: {value}");
+                }
             }
         }
     }
