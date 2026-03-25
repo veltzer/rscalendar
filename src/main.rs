@@ -865,19 +865,19 @@ fn print_event(event: &CalendarEvent) {
     println!("  end: {end}");
 
     if let Some(status) = &event.status {
-        println!("  status: {status}");
+        println!("  status: {status} (built-in)");
     }
 
     if let Some(location) = &event.location {
-        println!("  location: {location}");
+        println!("  location: {location} (built-in)");
     }
 
     if let Some(description) = &event.description {
-        println!("  description: {description}");
+        println!("  description: {description} (built-in)");
     }
 
     if let Some(html_link) = &event.html_link {
-        println!("  link: {html_link}");
+        println!("  link: {html_link} (built-in)");
     }
 
     if let Some(props) = &event.extended_properties {
