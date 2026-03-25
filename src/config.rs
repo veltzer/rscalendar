@@ -1,0 +1,72 @@
+use std::collections::HashMap;
+use std::path::PathBuf;
+
+use serde::Deserialize;
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct Config {
+    pub calendar_name: Option<String>,
+    pub no_browser: Option<bool>,
+    pub properties: Option<HashMap<String, Vec<String>>>,
+    pub check: Option<HashMap<String, Vec<String>>>,
+}
+
+impl Config {
+    pub fn load() -> Self {
+        let path = config_path();
+        if !path.exists() {
+            return Self::default();
+        }
+        let config: Self = match std::fs::read_to_string(&path) {
+            Ok(contents) => toml::from_str(&contents).unwrap_or_else(|e| {
+                eprintln!("Warning: failed to parse {}: {e}", path.display());
+                Self::default()
+            }),
+            Err(e) => {
+                eprintln!("Warning: failed to read {}: {e}", path.display());
+                Self::default()
+            }
+        };
+
+        if let Some(properties) = &config.properties {
+            for (key, values) in properties {
+                if values.is_empty() {
+                    eprintln!("Warning: property '{key}' in config.toml has an empty list of allowed values");
+                }
+            }
+        }
+
+        config
+    }
+
+    pub fn no_browser(&self) -> bool {
+        self.no_browser.unwrap_or(false)
+    }
+}
+
+pub fn config_dir() -> PathBuf {
+    let mut dir = dirs::home_dir().expect("Could not determine home directory");
+    dir.push(".config");
+    dir.push("rscalendar");
+    std::fs::create_dir_all(&dir).expect("Could not create config directory");
+    dir
+}
+
+pub fn config_path() -> PathBuf {
+    config_dir().join("config.toml")
+}
+
+pub fn credentials_path() -> PathBuf {
+    let path = config_dir().join("credentials.json");
+    if !path.exists() {
+        eprintln!("Error: credentials.json not found at {}", path.display());
+        eprintln!("Download OAuth2 credentials from Google Cloud Console and place them there.");
+        std::process::exit(1);
+    }
+    path
+}
+
+pub fn token_cache_path() -> PathBuf {
+    config_dir().join("token_cache.json")
+}

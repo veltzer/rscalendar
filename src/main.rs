@@ -1,128 +1,17 @@
-use std::future::Future;
-use std::path::PathBuf;
-use std::pin::Pin;
+mod auth;
+mod client;
+mod config;
+mod helpers;
+mod models;
 
-use anyhow::{Context, Result, anyhow, bail};
-use chrono::{DateTime, Duration, NaiveDate};
+use anyhow::{Context, Result, bail};
 use clap::{Args, CommandFactory, Parser, Subcommand};
-use reqwest::Client;
-use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, json};
-use urlencoding::encode;
+use serde_json::json;
 
-const API_BASE: &str = "https://www.googleapis.com/calendar/v3";
-const CALENDAR_SCOPE: &str = "https://www.googleapis.com/auth/calendar";
-
-// --- Config file ---
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
-struct Config {
-    calendar_name: Option<String>,
-    no_browser: Option<bool>,
-    /// Allowed property definitions: key -> list of allowed values.
-    properties: Option<std::collections::HashMap<String, Vec<String>>>,
-    /// Check rules: type value -> list of required property keys.
-    check: Option<std::collections::HashMap<String, Vec<String>>>,
-}
-
-impl Config {
-    fn load() -> Self {
-        let path = config_path();
-        if !path.exists() {
-            return Self::default();
-        }
-        let config: Self = match std::fs::read_to_string(&path) {
-            Ok(contents) => toml::from_str(&contents).unwrap_or_else(|e| {
-                eprintln!("Warning: failed to parse {}: {e}", path.display());
-                Self::default()
-            }),
-            Err(e) => {
-                eprintln!("Warning: failed to read {}: {e}", path.display());
-                Self::default()
-            }
-        };
-
-        // Warn about empty property value lists
-        if let Some(properties) = &config.properties {
-            for (key, values) in properties {
-                if values.is_empty() {
-                    eprintln!("Warning: property '{key}' in config.toml has an empty list of allowed values");
-                }
-            }
-        }
-
-        config
-    }
-
-    fn no_browser(&self) -> bool {
-        self.no_browser.unwrap_or(false)
-    }
-}
-
-// --- Config paths (mirrors rscontacts) ---
-
-fn config_dir() -> PathBuf {
-    let mut dir = dirs::home_dir().expect("Could not determine home directory");
-    dir.push(".config");
-    dir.push("rscalendar");
-    std::fs::create_dir_all(&dir).expect("Could not create config directory");
-    dir
-}
-
-fn config_path() -> PathBuf {
-    config_dir().join("config.toml")
-}
-
-fn credentials_path() -> PathBuf {
-    let path = config_dir().join("credentials.json");
-    if !path.exists() {
-        eprintln!("Error: credentials.json not found at {}", path.display());
-        eprintln!("Download OAuth2 credentials from Google Cloud Console and place them there.");
-        std::process::exit(1);
-    }
-    path
-}
-
-fn token_cache_path() -> PathBuf {
-    config_dir().join("token_cache.json")
-}
-
-// --- OAuth2 flow delegates (mirrors rscontacts) ---
-
-struct NoInteractionDelegate;
-
-impl yup_oauth2::authenticator_delegate::InstalledFlowDelegate for NoInteractionDelegate {
-    fn present_user_url<'a>(
-        &'a self,
-        _url: &'a str,
-        _need_code: bool,
-    ) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'a>> {
-        Box::pin(async move {
-            Err("Not authenticated. Run 'rscalendar auth' first.".to_string())
-        })
-    }
-}
-
-struct BrowserFlowDelegate;
-
-impl yup_oauth2::authenticator_delegate::InstalledFlowDelegate for BrowserFlowDelegate {
-    fn present_user_url<'a>(
-        &'a self,
-        url: &'a str,
-        _need_code: bool,
-    ) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'a>> {
-        Box::pin(async move {
-            if let Err(e) = open::that(url) {
-                eprintln!(
-                    "Failed to open browser: {}. Please open this URL manually:\n{}",
-                    e, url
-                );
-            }
-            Ok(String::new())
-        })
-    }
-}
+use client::{GoogleCalendarClient, resolve_calendar_id};
+use config::Config;
+use helpers::{build_event_patch_payload, parse_event_time, prompt_select, prompt_yes_no_quit};
+use models::{print_calendar, print_event};
 
 // --- CLI ---
 
@@ -151,21 +40,20 @@ enum Command {
     Defconfig,
     /// List all calendars accessible to the authenticated user.
     ListCalendars,
-    /// List upcoming events for a calendar.
+    /// List all events for a calendar.
     List(ListArgs),
-    /// Create a new event.
-    Create(UpsertArgs),
-    /// Update fields on an existing event.
-    Update(UpdateArgs),
-    /// Delete an event.
-    Delete(DeleteArgs),
+    /// Manage individual events.
+    Event {
+        #[command(subcommand)]
+        action: EventAction,
+    },
     /// Manage calendars.
     Calendar {
         #[command(subcommand)]
         action: CalendarAction,
     },
     /// Check that events have all required properties based on their type.
-    Check(CheckArgs),
+    Check(CalendarNameArgs),
     /// Manage event properties.
     Properties {
         #[command(subcommand)]
@@ -192,23 +80,14 @@ enum CalendarAction {
     },
 }
 
-#[derive(Debug, Args)]
-struct MoveEventsArgs {
-    /// Source calendar name to move events from.
-    #[arg(long)]
-    source: String,
-
-    /// Target calendar name to move events into.
-    #[arg(long)]
-    target: String,
-
-    /// Show what would be done without making changes.
-    #[arg(long, default_value_t = false)]
-    dry_run: bool,
-
-    /// Move all events without prompting.
-    #[arg(long, default_value_t = false)]
-    all: bool,
+#[derive(Debug, Subcommand)]
+enum EventAction {
+    /// Create a new event.
+    Create(UpsertArgs),
+    /// Update fields on an existing event.
+    Update(UpdateArgs),
+    /// Delete an event.
+    Delete(DeleteArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -216,13 +95,38 @@ enum PropertiesAction {
     /// Add properties to events (validates against config).
     Add(PropertiesAddArgs),
     /// Check that all event properties have keys and values defined in config.
-    Check(PropertiesCalendarArgs),
+    Check(CalendarNameArgs),
     /// Delete a property from events.
     Delete(PropertiesDeleteArgs),
     /// Rename a property key on events.
     Rename(PropertiesRenameArgs),
     /// Interactively edit properties on each event via TUI menus.
-    Edit(PropertiesCalendarArgs),
+    Edit(CalendarNameArgs),
+}
+
+// --- Shared args ---
+
+#[derive(Debug, Args)]
+struct CalendarNameArgs {
+    /// Calendar name (default: from config).
+    #[arg(long)]
+    calendar_name: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct MoveEventsArgs {
+    /// Source calendar name to move events from.
+    #[arg(long)]
+    source: String,
+    /// Target calendar name to move events into.
+    #[arg(long)]
+    target: String,
+    /// Show what would be done without making changes.
+    #[arg(long, default_value_t = false)]
+    dry_run: bool,
+    /// Move all events without prompting.
+    #[arg(long, default_value_t = false)]
+    all: bool,
 }
 
 #[derive(Debug, Args)]
@@ -230,32 +134,15 @@ struct PropertiesAddArgs {
     /// Calendar name (default: from config).
     #[arg(long)]
     calendar_name: Option<String>,
-
     /// Property key to set (must be defined in config). If omitted, prompts for all missing properties.
     #[arg(long)]
     key: Option<String>,
-
     /// Property value to set (must be allowed for the key in config). Requires --key.
     #[arg(long)]
     value: Option<String>,
-
     /// Apply to all events without prompting.
     #[arg(long, default_value_t = false)]
     all: bool,
-}
-
-#[derive(Debug, Args)]
-struct CheckArgs {
-    /// Calendar name (default: from config).
-    #[arg(long)]
-    calendar_name: Option<String>,
-}
-
-#[derive(Debug, Args)]
-struct PropertiesCalendarArgs {
-    /// Calendar name (default: from config).
-    #[arg(long)]
-    calendar_name: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -263,11 +150,9 @@ struct PropertiesDeleteArgs {
     /// Calendar name (default: from config).
     #[arg(long)]
     calendar_name: Option<String>,
-
     /// Property key to delete.
     #[arg(long)]
     key: String,
-
     /// Apply to all events without prompting.
     #[arg(long, default_value_t = false)]
     all: bool,
@@ -278,15 +163,12 @@ struct PropertiesRenameArgs {
     /// Calendar name (default: from config).
     #[arg(long)]
     calendar_name: Option<String>,
-
     /// Current property key name.
     #[arg(long)]
     from: String,
-
     /// New property key name.
     #[arg(long)]
     to: String,
-
     /// Apply to all events without prompting.
     #[arg(long, default_value_t = false)]
     all: bool,
@@ -304,25 +186,20 @@ struct UpsertArgs {
     /// Calendar name (default: from config).
     #[arg(long)]
     calendar_name: Option<String>,
-
     /// Event summary/title.
     #[arg(long)]
     summary: String,
-
     /// Event start time. Accepts RFC3339 or YYYY-MM-DD.
     #[arg(long)]
     start: String,
-
     /// Event end time. Accepts RFC3339 or YYYY-MM-DD. For all-day events,
     /// the provided date is treated as inclusive and converted to Google's
     /// exclusive end-date format.
     #[arg(long)]
     end: String,
-
     /// Optional description/body text.
     #[arg(long)]
     description: Option<String>,
-
     /// Optional location string.
     #[arg(long)]
     location: Option<String>,
@@ -333,27 +210,21 @@ struct UpdateArgs {
     /// Calendar name (default: from config).
     #[arg(long)]
     calendar_name: Option<String>,
-
     /// Event ID to update.
     #[arg(long)]
     event_id: String,
-
     /// Replacement event summary/title.
     #[arg(long)]
     summary: Option<String>,
-
     /// Replacement start time. Accepts RFC3339 or YYYY-MM-DD.
     #[arg(long)]
     start: Option<String>,
-
     /// Replacement end time. Accepts RFC3339 or YYYY-MM-DD.
     #[arg(long)]
     end: Option<String>,
-
     /// Replacement description.
     #[arg(long)]
     description: Option<String>,
-
     /// Replacement location.
     #[arg(long)]
     location: Option<String>,
@@ -364,7 +235,6 @@ struct DeleteArgs {
     /// Calendar name (default: from config).
     #[arg(long)]
     calendar_name: Option<String>,
-
     /// Event ID to delete.
     #[arg(long)]
     event_id: String,
@@ -375,630 +245,22 @@ struct AuthArgs {
     /// Print the authorization URL instead of opening the browser.
     #[arg(long, default_value_t = false)]
     no_browser: bool,
-
     /// Force re-authentication by removing cached token first.
     #[arg(long, default_value_t = false)]
     force: bool,
 }
 
-// --- Auth command (mirrors rscontacts) ---
-
-async fn cmd_auth(args: &AuthArgs, config: &Config) -> Result<()> {
-    if args.force {
-        let cache = token_cache_path();
-        if cache.exists() {
-            std::fs::remove_file(&cache)?;
-            eprintln!("Removed cached token at {}", cache.display());
-        }
-    }
-
-    let secret = yup_oauth2::read_application_secret(credentials_path())
-        .await
-        .context("failed to read credentials.json")?;
-
-    let mut builder = yup_oauth2::InstalledFlowAuthenticator::builder(
-        secret,
-        yup_oauth2::InstalledFlowReturnMethod::HTTPRedirect,
-    )
-    .persist_tokens_to_disk(token_cache_path());
-
-    let no_browser = args.no_browser || config.no_browser();
-    if !no_browser {
-        builder = builder.flow_delegate(Box::new(BrowserFlowDelegate));
-    }
-
-    let auth = builder
-        .build()
-        .await
-        .context("failed to build authenticator")?;
-
-    let _token = auth
-        .token(&[CALENDAR_SCOPE])
-        .await
-        .context("failed to obtain token")?;
-
-    eprintln!(
-        "Authentication successful. Token cached to {}",
-        token_cache_path().display()
-    );
-    Ok(())
-}
-
-// --- Google Calendar client using cached token ---
-
-#[derive(Clone)]
-struct GoogleCalendarClient {
-    http: Client,
-    access_token: String,
-}
-
-impl GoogleCalendarClient {
-    async fn from_cache() -> Result<Self> {
-        let cache_path = token_cache_path();
-        if !cache_path.exists() {
-            eprintln!("Error: not authenticated. Run 'rscalendar auth' first.");
-            std::process::exit(1);
-        }
-
-        let secret = yup_oauth2::read_application_secret(credentials_path())
-            .await
-            .context("failed to read credentials.json")?;
-
-        let auth = yup_oauth2::InstalledFlowAuthenticator::builder(
-            secret,
-            yup_oauth2::InstalledFlowReturnMethod::HTTPRedirect,
-        )
-        .persist_tokens_to_disk(cache_path)
-        .flow_delegate(Box::new(NoInteractionDelegate))
-        .build()
-        .await
-        .context("failed to build authenticator")?;
-
-        let token = auth
-            .token(&[CALENDAR_SCOPE])
-            .await
-            .context("failed to obtain access token; try running 'rscalendar auth' again")?;
-
-        let access_token = token.token().context("token has no access_token field")?.to_string();
-
-        Ok(Self {
-            http: Client::new(),
-            access_token,
-        })
-    }
-
-    async fn create_calendar(&self, summary: &str) -> Result<Value> {
-        let url = format!("{}/calendars", API_BASE);
-        let response = self
-            .authorized(self.http.post(&url))
-            .json(&json!({ "summary": summary }))
-            .send()
-            .await
-            .context("failed to create calendar")?;
-        let response = response.error_for_status().map_err(api_error)?;
-        let calendar: Value = response.json().await.context("failed to decode created calendar")?;
-
-        // Make the calendar public by inserting an ACL rule
-        let cal_id = calendar["id"].as_str().context("created calendar has no id")?;
-        let acl_url = format!("{}/calendars/{}/acl", API_BASE, encode(cal_id));
-        self.authorized(self.http.post(&acl_url))
-            .json(&json!({
-                "role": "reader",
-                "scope": { "type": "default" }
-            }))
-            .send()
-            .await
-            .context("failed to set calendar ACL")?
-            .error_for_status()
-            .map_err(api_error)?;
-
-        Ok(calendar)
-    }
-
-    async fn list_all_events(&self, calendar_id: &str) -> Result<Vec<CalendarEvent>> {
-        let mut all_events = Vec::new();
-        let mut page_token: Option<String> = None;
-
-        loop {
-            let url = format!(
-                "{}/calendars/{}/events",
-                API_BASE,
-                encode(calendar_id)
-            );
-
-            let mut request = self
-                .authorized(self.http.get(url))
-                .query(&[
-                    ("maxResults", "2500"),
-                    ("singleEvents", "true"),
-                    ("orderBy", "startTime"),
-                ]);
-
-            if let Some(token) = &page_token {
-                request = request.query(&[("pageToken", token.as_str())]);
-            }
-
-            let response = request
-                .send()
-                .await
-                .context("failed to call Google Calendar list events API")?;
-
-            let response = response.error_for_status().map_err(api_error)?;
-            let body: Value = response
-                .json()
-                .await
-                .context("failed to decode event list response")?;
-
-            if let Some(items) = body["items"].as_array() {
-                let events: Vec<CalendarEvent> = serde_json::from_value(json!(items))
-                    .context("failed to deserialize events")?;
-                all_events.extend(events);
-            }
-
-            match body["nextPageToken"].as_str() {
-                Some(token) => page_token = Some(token.to_string()),
-                None => break,
-            }
-        }
-
-        Ok(all_events)
-    }
-
-    async fn insert_event_raw(&self, calendar_id: &str, payload: &Value) -> Result<CalendarEvent> {
-        let url = format!(
-            "{}/calendars/{}/events",
-            API_BASE,
-            encode(calendar_id)
-        );
-
-        let response = self
-            .authorized(self.http.post(url))
-            .json(payload)
-            .send()
-            .await
-            .context("failed to insert event")?;
-
-        let response = response.error_for_status().map_err(api_error)?;
-        response
-            .json()
-            .await
-            .context("failed to decode inserted event")
-    }
-
-    async fn list_calendars(&self) -> Result<Vec<CalendarListEntry>> {
-        let url = format!("{}/users/me/calendarList", API_BASE);
-
-        let response = self
-            .authorized(self.http.get(url))
-            .send()
-            .await
-            .context("failed to call Google Calendar list calendars API")?;
-
-        let response = response.error_for_status().map_err(api_error)?;
-        let body: CalendarListResponse = response
-            .json()
-            .await
-            .context("failed to decode calendar list response")?;
-        Ok(body.items)
-    }
-
-    async fn create_event(&self, calendar_id: &str, args: &UpsertArgs) -> Result<CalendarEvent> {
-        let payload = build_event_insert_payload(
-            &args.summary,
-            &args.start,
-            &args.end,
-            args.description.as_deref(),
-            args.location.as_deref(),
-        )?;
-        let url = format!(
-            "{}/calendars/{}/events",
-            API_BASE,
-            encode(calendar_id)
-        );
-
-        let response = self
-            .authorized(self.http.post(url))
-            .json(&payload)
-            .send()
-            .await
-            .context("failed to call Google Calendar create event API")?;
-
-        let response = response.error_for_status().map_err(api_error)?;
-        response
-            .json()
-            .await
-            .context("failed to decode created event response")
-    }
-
-    async fn update_event(&self, calendar_id: &str, args: &UpdateArgs) -> Result<CalendarEvent> {
-        let payload = build_event_patch_payload(
-            args.summary.as_deref(),
-            args.start.as_deref(),
-            args.end.as_deref(),
-            args.description.as_deref(),
-            args.location.as_deref(),
-        )?;
-
-        if payload.is_empty() {
-            bail!("no fields were provided to update");
-        }
-
-        let url = format!(
-            "{}/calendars/{}/events/{}",
-            API_BASE,
-            encode(calendar_id),
-            encode(&args.event_id)
-        );
-
-        let response = self
-            .authorized(self.http.patch(url))
-            .json(&payload)
-            .send()
-            .await
-            .context("failed to call Google Calendar update event API")?;
-
-        let response = response.error_for_status().map_err(api_error)?;
-        response
-            .json()
-            .await
-            .context("failed to decode updated event response")
-    }
-
-    async fn patch_event_properties(
-        &self,
-        calendar_id: &str,
-        event_id: &str,
-        shared: &std::collections::HashMap<String, String>,
-    ) -> Result<CalendarEvent> {
-        let url = format!(
-            "{}/calendars/{}/events/{}",
-            API_BASE,
-            encode(calendar_id),
-            encode(event_id)
-        );
-
-        let payload = json!({
-            "extendedProperties": {
-                "shared": shared
-            }
-        });
-
-        let response = self
-            .authorized(self.http.patch(url))
-            .json(&payload)
-            .send()
-            .await
-            .context("failed to patch event properties")?;
-
-        let response = response.error_for_status().map_err(api_error)?;
-        response
-            .json()
-            .await
-            .context("failed to decode patched event")
-    }
-
-    async fn delete_event(&self, calendar_id: &str, event_id: &str) -> Result<()> {
-        let url = format!(
-            "{}/calendars/{}/events/{}",
-            API_BASE,
-            encode(calendar_id),
-            encode(event_id)
-        );
-
-        self.authorized(self.http.delete(url))
-            .send()
-            .await
-            .context("failed to call Google Calendar delete event API")?
-            .error_for_status()
-            .map_err(api_error)?;
-
-        Ok(())
-    }
-
-    fn authorized(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        request.bearer_auth(&self.access_token)
-    }
-}
-
-// --- Data types ---
-
-#[derive(Debug, Deserialize)]
-struct CalendarListResponse {
-    #[serde(default)]
-    items: Vec<CalendarListEntry>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CalendarListEntry {
-    id: Option<String>,
-    summary: Option<String>,
-    description: Option<String>,
-    primary: Option<bool>,
-    #[serde(rename = "accessRole")]
-    access_role: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CalendarEvent {
-    id: Option<String>,
-    summary: Option<String>,
-    description: Option<String>,
-    location: Option<String>,
-    status: Option<String>,
-    html_link: Option<String>,
-    start: Option<EventDateTime>,
-    end: Option<EventDateTime>,
-    #[serde(rename = "extendedProperties")]
-    extended_properties: Option<ExtendedProperties>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-struct ExtendedProperties {
-    #[serde(default)]
-    shared: Option<std::collections::HashMap<String, String>>,
-    #[serde(default)]
-    private: Option<std::collections::HashMap<String, String>>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-struct EventDateTime {
-    #[serde(rename = "dateTime", skip_serializing_if = "Option::is_none")]
-    date_time: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    date: Option<String>,
-}
-
-impl EventDateTime {
-    fn describe(&self) -> String {
-        match (&self.date_time, &self.date) {
-            (Some(date_time), None) => date_time.clone(),
-            (None, Some(date)) => date.clone(),
-            _ => "unknown".to_string(),
-        }
-    }
-}
-
-// --- Helpers ---
-
-fn build_event_insert_payload(
-    summary: &str,
-    start: &str,
-    end: &str,
-    description: Option<&str>,
-    location: Option<&str>,
-) -> Result<Value> {
-    let mut payload = Map::new();
-    payload.insert("summary".to_string(), json!(summary));
-    payload.insert(
-        "start".to_string(),
-        serde_json::to_value(parse_event_time(start, false)?)?,
-    );
-    payload.insert(
-        "end".to_string(),
-        serde_json::to_value(parse_event_time(end, true)?)?,
-    );
-
-    if let Some(description) = description {
-        payload.insert("description".to_string(), json!(description));
-    }
-
-    if let Some(location) = location {
-        payload.insert("location".to_string(), json!(location));
-    }
-
-    Ok(Value::Object(payload))
-}
-
-fn build_event_patch_payload(
-    summary: Option<&str>,
-    start: Option<&str>,
-    end: Option<&str>,
-    description: Option<&str>,
-    location: Option<&str>,
-) -> Result<Map<String, Value>> {
-    let mut payload = Map::new();
-
-    if let Some(summary) = summary {
-        payload.insert("summary".to_string(), json!(summary));
-    }
-
-    if let Some(start) = start {
-        payload.insert(
-            "start".to_string(),
-            serde_json::to_value(parse_event_time(start, false)?)?,
-        );
-    }
-
-    if let Some(end) = end {
-        payload.insert(
-            "end".to_string(),
-            serde_json::to_value(parse_event_time(end, true)?)?,
-        );
-    }
-
-    if let Some(description) = description {
-        payload.insert("description".to_string(), json!(description));
-    }
-
-    if let Some(location) = location {
-        payload.insert("location".to_string(), json!(location));
-    }
-
-    Ok(payload)
-}
-
-fn parse_event_time(input: &str, end_of_all_day_event: bool) -> Result<EventDateTime> {
-    if let Ok(date_time) = DateTime::parse_from_rfc3339(input) {
-        return Ok(EventDateTime {
-            date_time: Some(date_time.to_rfc3339()),
-            date: None,
-        });
-    }
-
-    let date = NaiveDate::parse_from_str(input, "%Y-%m-%d")
-        .with_context(|| format!("failed to parse '{input}' as RFC3339 or YYYY-MM-DD"))?;
-
-    let date = if end_of_all_day_event {
-        date.checked_add_signed(Duration::days(1))
-            .ok_or_else(|| anyhow!("date overflow while adjusting all-day event end date"))?
-    } else {
-        date
-    };
-
-    Ok(EventDateTime {
-        date_time: None,
-        date: Some(date.format("%Y-%m-%d").to_string()),
-    })
-}
-
-fn resolve_calendar_id<'a>(
-    calendars: &'a [CalendarListEntry],
-    name: Option<&str>,
+// --- Helper: fetch events for a calendar by name ---
+
+async fn fetch_events(
+    client: &GoogleCalendarClient,
+    calendar_name: Option<&str>,
     config: &Config,
-) -> Result<&'a str> {
-    let name = name
-        .or(config.calendar_name.as_deref())
-        .context("no calendar name specified; use --calendar-name or set calendar_name in config.toml")?;
-    let cal = calendars
-        .iter()
-        .find(|c| c.summary.as_deref() == Some(name))
-        .with_context(|| format!("no calendar named '{name}' found"))?;
-    cal.id
-        .as_deref()
-        .context("calendar has no id")
-}
-
-fn prompt_select(prompt: &str, options: &[String]) -> Result<Option<String>> {
-    use std::io::{Write, BufRead};
-    eprintln!("{prompt}");
-    for (i, opt) in options.iter().enumerate() {
-        eprintln!("  {}: {opt}", i + 1);
-    }
-    eprintln!("  s: skip this property");
-    eprint!("  choice: ");
-    std::io::stderr().flush()?;
-    let mut line = String::new();
-    std::io::stdin().lock().read_line(&mut line)?;
-    let trimmed = line.trim().to_lowercase();
-    if trimmed == "s" || trimmed == "skip" {
-        return Ok(None);
-    }
-    if let Ok(n) = trimmed.parse::<usize>() {
-        if n >= 1 && n <= options.len() {
-            return Ok(Some(options[n - 1].clone()));
-        }
-    }
-    eprintln!("  invalid choice, skipping");
-    Ok(None)
-}
-
-fn prompt_yes_no_quit(message: &str) -> Result<Option<bool>> {
-    use std::io::{Write, BufRead};
-    loop {
-        eprint!("{message} [y/n/q]: ");
-        std::io::stderr().flush()?;
-        let mut line = String::new();
-        std::io::stdin().lock().read_line(&mut line)?;
-        match line.trim().to_lowercase().as_str() {
-            "y" | "yes" => return Ok(Some(true)),
-            "n" | "no" => return Ok(Some(false)),
-            "q" | "quit" => return Ok(None),
-            _ => eprintln!("  Please enter y, n, or q"),
-        }
-    }
-}
-
-fn api_error(error: reqwest::Error) -> anyhow::Error {
-    if let Some(status) = error.status() {
-        anyhow!("Google Calendar API request failed with status {status}")
-    } else {
-        anyhow!(error)
-    }
-}
-
-fn print_event(event: &CalendarEvent, show_builtin: bool, json_output: bool) {
-    if json_output {
-        let mut obj = Map::new();
-        if let Some(id) = &event.id {
-            obj.insert("id".to_string(), json!(id));
-        }
-        if let Some(summary) = &event.summary {
-            obj.insert("summary".to_string(), json!(summary));
-        }
-        if let Some(start) = &event.start {
-            obj.insert("start".to_string(), json!(start.describe()));
-        }
-        if let Some(end) = &event.end {
-            obj.insert("end".to_string(), json!(end.describe()));
-        }
-        if let Some(status) = &event.status {
-            obj.insert("status".to_string(), json!(status));
-        }
-        if let Some(location) = &event.location {
-            obj.insert("location".to_string(), json!(location));
-        }
-        if let Some(description) = &event.description {
-            obj.insert("description".to_string(), json!(description));
-        }
-        if let Some(html_link) = &event.html_link {
-            obj.insert("link".to_string(), json!(html_link));
-        }
-        if let Some(props) = &event.extended_properties {
-            if let Some(shared) = &props.shared {
-                obj.insert("properties".to_string(), json!(shared));
-            }
-        }
-        println!("{}", serde_json::to_string(&Value::Object(obj)).unwrap());
-        return;
-    }
-
-    let id = event.id.as_deref().unwrap_or("<missing-id>");
-    let summary = event.summary.as_deref().unwrap_or("<untitled>");
-    let start = event
-        .start
-        .as_ref()
-        .map(EventDateTime::describe)
-        .unwrap_or_else(|| "unknown".to_string());
-    let end = event
-        .end
-        .as_ref()
-        .map(EventDateTime::describe)
-        .unwrap_or_else(|| "unknown".to_string());
-    let bi = if show_builtin { " (built-in)" } else { "" };
-
-    println!("{summary}");
-    println!("  id: {id}{bi}");
-    println!("  start: {start}{bi}");
-    println!("  end: {end}{bi}");
-
-    if let Some(status) = &event.status {
-        println!("  status: {status}{bi}");
-    }
-
-    if let Some(location) = &event.location {
-        println!("  location: {location}{bi}");
-    }
-
-    if let Some(description) = &event.description {
-        println!("  description: {description}{bi}");
-    }
-
-    if let Some(html_link) = &event.html_link {
-        println!("  link: {html_link}{bi}");
-    }
-
-    if let Some(props) = &event.extended_properties {
-        if let Some(shared) = &props.shared {
-            if !shared.is_empty() {
-                println!("  ---");
-                for (key, value) in shared {
-                    println!("  {key}: {value}");
-                }
-            }
-        }
-    }
-
-    println!();
+) -> Result<(String, Vec<models::CalendarEvent>)> {
+    let calendars = client.list_calendars().await?;
+    let calendar_id = resolve_calendar_id(&calendars, calendar_name, config)?.to_string();
+    let events = client.list_all_events(&calendar_id).await?;
+    Ok((calendar_id, events))
 }
 
 // --- Main ---
@@ -1038,7 +300,7 @@ async fn main() -> Result<()> {
     }
 
     if let Command::Auth(args) = &cli.command {
-        cmd_auth(args, &config).await?;
+        auth::cmd_auth(args.no_browser, args.force, &config).await?;
         return Ok(());
     }
 
@@ -1051,26 +313,12 @@ async fn main() -> Result<()> {
                 println!("No calendars found.");
             } else {
                 for cal in &calendars {
-                    let id = cal.id.as_deref().unwrap_or("<missing-id>");
-                    let summary = cal.summary.as_deref().unwrap_or("<untitled>");
-                    let primary = if cal.primary.unwrap_or(false) { " (primary)" } else { "" };
-                    println!("{summary}{primary}");
-                    println!("  id: {id}");
-                    if let Some(role) = &cal.access_role {
-                        println!("  role: {role}");
-                    }
-                    if let Some(desc) = &cal.description {
-                        println!("  description: {desc}");
-                    }
-                    println!();
+                    print_calendar(cal, cli.json);
                 }
             }
         }
         Command::List(args) => {
-            let calendars = client.list_calendars().await?;
-            let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), &config)?;
-            let events = client.list_all_events(calendar_id).await?;
-
+            let (_, events) = fetch_events(&client, args.calendar_name.as_deref(), &config).await?;
             if events.is_empty() {
                 println!("No events found.");
             } else {
@@ -1079,26 +327,37 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Command::Create(args) => {
-            let calendars = client.list_calendars().await?;
-            let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), &config)?;
-            let event = client.create_event(calendar_id, &args).await?;
-            println!("Created event:");
-            print_event(&event, cli.show_builtin, cli.json);
-        }
-        Command::Update(args) => {
-            let calendars = client.list_calendars().await?;
-            let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), &config)?;
-            let event = client.update_event(calendar_id, &args).await?;
-            println!("Updated event:");
-            print_event(&event, cli.show_builtin, cli.json);
-        }
-        Command::Delete(args) => {
-            let calendars = client.list_calendars().await?;
-            let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), &config)?;
-            client.delete_event(calendar_id, &args.event_id).await?;
-            println!("Deleted event '{}'.", args.event_id);
-        }
+        Command::Event { action } => match action {
+            EventAction::Create(args) => {
+                let calendars = client.list_calendars().await?;
+                let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), &config)?;
+                let start = parse_event_time(&args.start, false)?;
+                let end = parse_event_time(&args.end, true)?;
+                let event = client.create_event(calendar_id, &args.summary, &start, &end, args.description.as_deref(), args.location.as_deref()).await?;
+                println!("Created event:");
+                print_event(&event, cli.show_builtin, cli.json);
+            }
+            EventAction::Update(args) => {
+                let calendars = client.list_calendars().await?;
+                let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), &config)?;
+                let payload = build_event_patch_payload(
+                    args.summary.as_deref(),
+                    args.start.as_deref(),
+                    args.end.as_deref(),
+                    args.description.as_deref(),
+                    args.location.as_deref(),
+                )?;
+                let event = client.update_event(calendar_id, &args.event_id, &payload).await?;
+                println!("Updated event:");
+                print_event(&event, cli.show_builtin, cli.json);
+            }
+            EventAction::Delete(args) => {
+                let calendars = client.list_calendars().await?;
+                let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), &config)?;
+                client.delete_event(calendar_id, &args.event_id).await?;
+                println!("Deleted event '{}'.", args.event_id);
+            }
+        },
         Command::Check(args) => {
             let check_rules = config.check.as_ref()
                 .context("no [check] section in config.toml")?;
@@ -1106,10 +365,7 @@ async fn main() -> Result<()> {
                 bail!("no rules defined in [check] section of config.toml");
             }
 
-            let calendars = client.list_calendars().await?;
-            let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), &config)?;
-            let events = client.list_all_events(calendar_id).await?;
-
+            let (_, events) = fetch_events(&client, args.calendar_name.as_deref(), &config).await?;
             if events.is_empty() {
                 println!("No events found.");
                 return Ok(());
@@ -1118,19 +374,10 @@ async fn main() -> Result<()> {
             let mut issues = 0u32;
             let mut events_with_issues = 0u32;
             for event in &events {
-                let summary = event.summary.as_deref().unwrap_or("<untitled>");
-                let start = event
-                    .start
-                    .as_ref()
-                    .map(EventDateTime::describe)
-                    .unwrap_or_else(|| "unknown".to_string());
+                let summary = event.summary_or_default();
+                let start = event.start_str();
+                let shared = event.extended_properties.as_ref().and_then(|p| p.shared.as_ref());
 
-                let shared = event
-                    .extended_properties
-                    .as_ref()
-                    .and_then(|p| p.shared.as_ref());
-
-                // Get the event's type
                 let event_type = match shared.and_then(|s| s.get("type")) {
                     Some(t) => t,
                     None => {
@@ -1142,7 +389,6 @@ async fn main() -> Result<()> {
                     }
                 };
 
-                // Look up required properties for this type
                 let required = match check_rules.get(event_type) {
                     Some(r) => r,
                     None => {
@@ -1193,17 +439,11 @@ async fn main() -> Result<()> {
                     let allowed = properties.get(key)
                         .with_context(|| format!("key '{key}' is not defined in [properties] in config.toml"))?;
                     if !allowed.contains(value) {
-                        bail!(
-                            "value '{value}' is not allowed for key '{key}'. Allowed: {}",
-                            allowed.join(", ")
-                        );
+                        bail!("value '{value}' is not allowed for key '{key}'. Allowed: {}", allowed.join(", "));
                     }
                 }
 
-                let calendars = client.list_calendars().await?;
-                let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), &config)?;
-                let events = client.list_all_events(calendar_id).await?;
-
+                let (calendar_id, events) = fetch_events(&client, args.calendar_name.as_deref(), &config).await?;
                 if events.is_empty() {
                     println!("No events found.");
                     return Ok(());
@@ -1220,26 +460,17 @@ async fn main() -> Result<()> {
                 let mut updated = 0u32;
                 let mut skipped = 0u32;
                 for event in &events {
-                    let summary = event.summary.as_deref().unwrap_or("<untitled>");
-                    let start = event
-                        .start
-                        .as_ref()
-                        .map(EventDateTime::describe)
-                        .unwrap_or_else(|| "unknown".to_string());
+                    let summary = event.summary_or_default();
+                    let start = event.start_str();
                     let event_id = match &event.id {
                         Some(id) => id,
                         None => continue,
                     };
 
-                    let existing: std::collections::HashMap<String, String> = event
-                        .extended_properties
-                        .as_ref()
-                        .and_then(|p| p.shared.clone())
-                        .unwrap_or_default();
+                    let existing = event.shared_properties();
 
                     if let (Some(key), Some(value)) = (&args.key, &args.value) {
-                        let already_set = existing.get(key).is_some_and(|v| v == value);
-                        if already_set {
+                        if existing.get(key).is_some_and(|v| v == value) {
                             skipped += 1;
                             continue;
                         }
@@ -1248,10 +479,7 @@ async fn main() -> Result<()> {
                             let prompt = format!("Set {key}={value} on '{summary}' ({start})?");
                             match prompt_yes_no_quit(&prompt)? {
                                 Some(true) => {}
-                                Some(false) => {
-                                    skipped += 1;
-                                    continue;
-                                }
+                                Some(false) => { skipped += 1; continue; }
                                 None => {
                                     println!("\nQuit. {updated} updated, {skipped} skipped.");
                                     return Ok(());
@@ -1261,7 +489,7 @@ async fn main() -> Result<()> {
 
                         let mut new_props = existing;
                         new_props.insert(key.clone(), value.clone());
-                        client.patch_event_properties(calendar_id, event_id, &new_props).await?;
+                        client.patch_event_properties(&calendar_id, event_id, &new_props).await?;
                         println!("  set on: {summary} ({start})");
                         updated += 1;
                     } else {
@@ -1288,7 +516,7 @@ async fn main() -> Result<()> {
                         }
 
                         if changed {
-                            client.patch_event_properties(calendar_id, event_id, &new_props).await?;
+                            client.patch_event_properties(&calendar_id, event_id, &new_props).await?;
                             eprintln!("  updated\n");
                             updated += 1;
                         } else {
@@ -1307,10 +535,7 @@ async fn main() -> Result<()> {
                     bail!("no properties defined in [properties] section of config.toml");
                 }
 
-                let calendars = client.list_calendars().await?;
-                let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), &config)?;
-                let events = client.list_all_events(calendar_id).await?;
-
+                let (_, events) = fetch_events(&client, args.calendar_name.as_deref(), &config).await?;
                 if events.is_empty() {
                     println!("No events found.");
                     return Ok(());
@@ -1318,25 +543,15 @@ async fn main() -> Result<()> {
 
                 let mut issues = 0u32;
                 for event in &events {
-                    let summary = event.summary.as_deref().unwrap_or("<untitled>");
-                    let start = event
-                        .start
-                        .as_ref()
-                        .map(EventDateTime::describe)
-                        .unwrap_or_else(|| "unknown".to_string());
-
-                    let shared = event
-                        .extended_properties
-                        .as_ref()
-                        .and_then(|p| p.shared.as_ref());
+                    let summary = event.summary_or_default();
+                    let start = event.start_str();
+                    let shared = event.extended_properties.as_ref().and_then(|p| p.shared.as_ref());
 
                     let mut event_issues: Vec<String> = Vec::new();
 
                     for key in properties.keys() {
                         match shared.and_then(|s| s.get(key)) {
-                            None => {
-                                event_issues.push(format!("missing property '{key}'"));
-                            }
+                            None => event_issues.push(format!("missing property '{key}'")),
                             Some(value) => {
                                 let allowed = &properties[key];
                                 if !allowed.contains(value) {
@@ -1373,10 +588,7 @@ async fn main() -> Result<()> {
                 }
             }
             PropertiesAction::Delete(args) => {
-                let calendars = client.list_calendars().await?;
-                let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), &config)?;
-                let events = client.list_all_events(calendar_id).await?;
-
+                let (calendar_id, events) = fetch_events(&client, args.calendar_name.as_deref(), &config).await?;
                 if events.is_empty() {
                     println!("No events found.");
                     return Ok(());
@@ -1385,23 +597,14 @@ async fn main() -> Result<()> {
                 let mut updated = 0u32;
                 let mut skipped = 0u32;
                 for event in &events {
-                    let summary = event.summary.as_deref().unwrap_or("<untitled>");
-                    let start = event
-                        .start
-                        .as_ref()
-                        .map(EventDateTime::describe)
-                        .unwrap_or_else(|| "unknown".to_string());
+                    let summary = event.summary_or_default();
+                    let start = event.start_str();
                     let event_id = match &event.id {
                         Some(id) => id,
                         None => continue,
                     };
 
-                    let existing: std::collections::HashMap<String, String> = event
-                        .extended_properties
-                        .as_ref()
-                        .and_then(|p| p.shared.clone())
-                        .unwrap_or_default();
-
+                    let existing = event.shared_properties();
                     if !existing.contains_key(&args.key) {
                         skipped += 1;
                         continue;
@@ -1412,10 +615,7 @@ async fn main() -> Result<()> {
                         let prompt = format!("Delete {}={current_value} from '{summary}' ({start})?", args.key);
                         match prompt_yes_no_quit(&prompt)? {
                             Some(true) => {}
-                            Some(false) => {
-                                skipped += 1;
-                                continue;
-                            }
+                            Some(false) => { skipped += 1; continue; }
                             None => {
                                 println!("\nQuit. {updated} deleted, {skipped} skipped.");
                                 return Ok(());
@@ -1423,26 +623,7 @@ async fn main() -> Result<()> {
                         }
                     }
 
-                    let url = format!(
-                        "{}/calendars/{}/events/{}",
-                        API_BASE,
-                        encode(calendar_id),
-                        encode(event_id)
-                    );
-                    let mut shared = Map::new();
-                    shared.insert(args.key.clone(), Value::Null);
-                    let payload = json!({
-                        "extendedProperties": {
-                            "shared": shared
-                        }
-                    });
-                    client.authorized(client.http.patch(url))
-                        .json(&payload)
-                        .send()
-                        .await
-                        .context("failed to delete property")?
-                        .error_for_status()
-                        .map_err(api_error)?;
+                    client.delete_property(&calendar_id, event_id, &args.key).await?;
                     println!("  deleted from: {summary} ({start})");
                     updated += 1;
                 }
@@ -1450,10 +631,7 @@ async fn main() -> Result<()> {
                 println!("\nDone. {updated} deleted, {skipped} skipped.");
             }
             PropertiesAction::Rename(args) => {
-                let calendars = client.list_calendars().await?;
-                let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), &config)?;
-                let events = client.list_all_events(calendar_id).await?;
-
+                let (calendar_id, events) = fetch_events(&client, args.calendar_name.as_deref(), &config).await?;
                 if events.is_empty() {
                     println!("No events found.");
                     return Ok(());
@@ -1462,29 +640,17 @@ async fn main() -> Result<()> {
                 let mut updated = 0u32;
                 let mut skipped = 0u32;
                 for event in &events {
-                    let summary = event.summary.as_deref().unwrap_or("<untitled>");
-                    let start = event
-                        .start
-                        .as_ref()
-                        .map(EventDateTime::describe)
-                        .unwrap_or_else(|| "unknown".to_string());
+                    let summary = event.summary_or_default();
+                    let start = event.start_str();
                     let event_id = match &event.id {
                         Some(id) => id,
                         None => continue,
                     };
 
-                    let mut existing: std::collections::HashMap<String, String> = event
-                        .extended_properties
-                        .as_ref()
-                        .and_then(|p| p.shared.clone())
-                        .unwrap_or_default();
-
+                    let mut existing = event.shared_properties();
                     let value = match existing.remove(&args.from) {
                         Some(v) => v,
-                        None => {
-                            skipped += 1;
-                            continue;
-                        }
+                        None => { skipped += 1; continue; }
                     };
 
                     if !args.all {
@@ -1494,10 +660,7 @@ async fn main() -> Result<()> {
                         );
                         match prompt_yes_no_quit(&prompt)? {
                             Some(true) => {}
-                            Some(false) => {
-                                skipped += 1;
-                                continue;
-                            }
+                            Some(false) => { skipped += 1; continue; }
                             None => {
                                 println!("\nQuit. {updated} renamed, {skipped} skipped.");
                                 return Ok(());
@@ -1506,7 +669,7 @@ async fn main() -> Result<()> {
                     }
 
                     existing.insert(args.to.clone(), value);
-                    client.patch_event_properties(calendar_id, event_id, &existing).await?;
+                    client.patch_event_properties(&calendar_id, event_id, &existing).await?;
                     println!("  renamed on: {summary} ({start})");
                     updated += 1;
                 }
@@ -1520,10 +683,7 @@ async fn main() -> Result<()> {
                     bail!("no properties defined in [properties] section of config.toml");
                 }
 
-                let calendars = client.list_calendars().await?;
-                let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), &config)?;
-                let events = client.list_all_events(calendar_id).await?;
-
+                let (calendar_id, events) = fetch_events(&client, args.calendar_name.as_deref(), &config).await?;
                 if events.is_empty() {
                     println!("No events found.");
                     return Ok(());
@@ -1537,30 +697,17 @@ async fn main() -> Result<()> {
 
                 let mut updated = 0u32;
                 for event in &events {
-                    let summary = event.summary.as_deref().unwrap_or("<untitled>");
-                    let start = event
-                        .start
-                        .as_ref()
-                        .map(EventDateTime::describe)
-                        .unwrap_or_else(|| "unknown".to_string());
+                    let summary = event.summary_or_default();
+                    let start = event.start_str();
+                    let end = event.end_str();
                     let event_id = match &event.id {
                         Some(id) => id,
                         None => continue,
                     };
 
-                    let mut current: std::collections::HashMap<String, String> = event
-                        .extended_properties
-                        .as_ref()
-                        .and_then(|p| p.shared.clone())
-                        .unwrap_or_default();
-
+                    let mut current = event.shared_properties();
                     let mut changed = false;
                     let mut deleted_keys: Vec<String> = Vec::new();
-                    let end = event
-                        .end
-                        .as_ref()
-                        .map(EventDateTime::describe)
-                        .unwrap_or_else(|| "unknown".to_string());
 
                     loop {
                         eprintln!();
@@ -1573,7 +720,6 @@ async fn main() -> Result<()> {
                         if let Some(description) = &event.description {
                             eprintln!("  description: {description}");
                         }
-                        // Show current properties
                         if current.is_empty() && deleted_keys.is_empty() {
                             eprintln!("  (no properties)");
                         } else {
@@ -1582,7 +728,6 @@ async fn main() -> Result<()> {
                                     eprintln!("  {key}: {val}");
                                 }
                             }
-                            // Show any non-config keys
                             for (k, v) in &current {
                                 if !properties.contains_key(k) {
                                     eprintln!("  {k}: {v} (unknown)");
@@ -1590,8 +735,7 @@ async fn main() -> Result<()> {
                             }
                         }
 
-                        // Build menu: one line per key with applicable actions
-                        struct MenuEntry { key: String, actions: Vec<(&'static str, &'static str)> } // (code, label)
+                        struct MenuEntry { key: String, actions: Vec<(&'static str, &'static str)> }
                         let mut menu_entries: Vec<MenuEntry> = Vec::new();
 
                         for key in &sorted_keys {
@@ -1618,7 +762,7 @@ async fn main() -> Result<()> {
                         eprintln!("    n: next event");
                         eprintln!("    q: quit");
 
-                        use std::io::{Write, BufRead};
+                        use std::io::{BufRead, Write};
                         eprint!("  choice: ");
                         std::io::stderr().flush()?;
                         let mut line = String::new();
@@ -1630,28 +774,7 @@ async fn main() -> Result<()> {
                         }
                         if trimmed == "q" || trimmed == "quit" {
                             if changed {
-                                // Apply pending changes before quitting
-                                let mut patch_shared = Map::new();
-                                for (k, v) in &current {
-                                    patch_shared.insert(k.clone(), json!(v));
-                                }
-                                for k in &deleted_keys {
-                                    patch_shared.insert(k.clone(), Value::Null);
-                                }
-                                let payload = json!({
-                                    "extendedProperties": { "shared": patch_shared }
-                                });
-                                let url = format!(
-                                    "{}/calendars/{}/events/{}",
-                                    API_BASE, encode(calendar_id), encode(event_id)
-                                );
-                                client.authorized(client.http.patch(url))
-                                    .json(&payload)
-                                    .send()
-                                    .await
-                                    .context("failed to update properties")?
-                                    .error_for_status()
-                                    .map_err(api_error)?;
+                                client.patch_event_properties_with_deletes(&calendar_id, event_id, &current, &deleted_keys).await?;
                                 updated += 1;
                                 eprintln!("  saved.");
                             }
@@ -1659,8 +782,6 @@ async fn main() -> Result<()> {
                             return Ok(());
                         }
 
-                        // Parse input: "<number><action>" e.g. "1a", "2c", "3d"
-                        // or just "<number>" if there's only one action
                         let (num_str, action_code) = if trimmed.len() >= 2 && trimmed.as_bytes().last().unwrap().is_ascii_alphabetic() {
                             (&trimmed[..trimmed.len()-1], Some(&trimmed[trimmed.len()-1..]))
                         } else {
@@ -1669,17 +790,11 @@ async fn main() -> Result<()> {
 
                         let idx = match num_str.parse::<usize>() {
                             Ok(n) if n >= 1 && n <= menu_entries.len() => n - 1,
-                            _ => {
-                                eprintln!("  invalid choice");
-                                continue;
-                            }
+                            _ => { eprintln!("  invalid choice"); continue; }
                         };
 
                         let entry = &menu_entries[idx];
-
-                        // Resolve the action
                         let action = if entry.actions.len() == 1 {
-                            // Only one action available, use it regardless of input
                             entry.actions[0].0
                         } else if let Some(code) = action_code {
                             if let Some((a, _)) = entry.actions.iter().find(|(c, _)| *c == code) {
@@ -1714,27 +829,7 @@ async fn main() -> Result<()> {
                     }
 
                     if changed {
-                        let mut patch_shared = Map::new();
-                        for (k, v) in &current {
-                            patch_shared.insert(k.clone(), json!(v));
-                        }
-                        for k in &deleted_keys {
-                            patch_shared.insert(k.clone(), Value::Null);
-                        }
-                        let payload = json!({
-                            "extendedProperties": { "shared": patch_shared }
-                        });
-                        let url = format!(
-                            "{}/calendars/{}/events/{}",
-                            API_BASE, encode(calendar_id), encode(event_id)
-                        );
-                        client.authorized(client.http.patch(url))
-                            .json(&payload)
-                            .send()
-                            .await
-                            .context("failed to update properties")?
-                            .error_for_status()
-                            .map_err(api_error)?;
+                        client.patch_event_properties_with_deletes(&calendar_id, event_id, &current, &deleted_keys).await?;
                         eprintln!("  saved.");
                         updated += 1;
                     }
@@ -1754,25 +849,15 @@ async fn main() -> Result<()> {
         Command::MoveEvents(args) => {
             let calendars = client.list_calendars().await?;
 
-            let source_cal = calendars
-                .iter()
+            let source_cal = calendars.iter()
                 .find(|c| c.summary.as_deref() == Some(&args.source))
                 .context(format!("no calendar named '{}' found", args.source))?;
-            let source_id = source_cal
-                .id
-                .as_deref()
-                .context("source calendar has no id")?
-                .to_string();
+            let source_id = source_cal.id.as_deref().context("source calendar has no id")?.to_string();
 
-            let target_cal = calendars
-                .iter()
+            let target_cal = calendars.iter()
                 .find(|c| c.summary.as_deref() == Some(&args.target))
                 .context(format!("no calendar named '{}' found", args.target))?;
-            let target_id = target_cal
-                .id
-                .as_deref()
-                .context("target calendar has no id")?
-                .to_string();
+            let target_id = target_cal.id.as_deref().context("target calendar has no id")?.to_string();
 
             println!("Moving events from '{}' to '{}'", args.source, args.target);
             if !args.all {
@@ -1791,12 +876,8 @@ async fn main() -> Result<()> {
             let mut moved = 0u32;
             let mut skipped = 0u32;
             for event in &events {
-                let summary = event.summary.as_deref().unwrap_or("<untitled>");
-                let start = event
-                    .start
-                    .as_ref()
-                    .map(EventDateTime::describe)
-                    .unwrap_or_else(|| "unknown".to_string());
+                let summary = event.summary_or_default();
+                let start = event.start_str();
                 let event_id = match &event.id {
                     Some(id) => id,
                     None => {
@@ -1810,10 +891,7 @@ async fn main() -> Result<()> {
                     let prompt = format!("  Move '{summary}' ({start})?");
                     match prompt_yes_no_quit(&prompt)? {
                         Some(true) => {}
-                        Some(false) => {
-                            skipped += 1;
-                            continue;
-                        }
+                        Some(false) => { skipped += 1; continue; }
                         None => {
                             println!("\nQuit. {moved} event(s) moved, {skipped} skipped.");
                             return Ok(());
@@ -1825,10 +903,7 @@ async fn main() -> Result<()> {
                     println!("  [dry-run] would move: {summary} ({start})");
                     moved += 1;
                 } else {
-                    let mut payload = json!({
-                        "summary": summary,
-                    });
-
+                    let mut payload = json!({ "summary": summary });
                     if let Some(start) = &event.start {
                         payload["start"] = serde_json::to_value(start)?;
                     }
@@ -1862,44 +937,4 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{build_event_patch_payload, parse_event_time};
-
-    #[test]
-    fn parses_rfc3339_time() {
-        let event_time = parse_event_time("2026-03-24T12:30:00+02:00", false).unwrap();
-        assert_eq!(
-            event_time.date_time.as_deref(),
-            Some("2026-03-24T12:30:00+02:00")
-        );
-        assert_eq!(event_time.date, None);
-    }
-
-    #[test]
-    fn adjusts_end_date_for_all_day_event() {
-        let event_time = parse_event_time("2026-03-24", true).unwrap();
-        assert_eq!(event_time.date_time, None);
-        assert_eq!(event_time.date.as_deref(), Some("2026-03-25"));
-    }
-
-    #[test]
-    fn builds_sparse_patch_payload() {
-        let payload = build_event_patch_payload(
-            Some("New summary"),
-            None,
-            Some("2026-03-24"),
-            None,
-            Some("Office"),
-        )
-        .unwrap();
-
-        assert_eq!(payload["summary"], "New summary");
-        assert_eq!(payload["location"], "Office");
-        assert_eq!(payload["end"]["date"], "2026-03-25");
-        assert!(payload.get("start").is_none());
-        assert!(payload.get("description").is_none());
-    }
 }
