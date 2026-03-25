@@ -43,14 +43,14 @@ impl yup_oauth2::authenticator_delegate::InstalledFlowDelegate for BrowserFlowDe
 
 pub async fn cmd_auth(no_browser_flag: bool, force: bool, config: &Config) -> Result<()> {
     if force {
-        let cache = token_cache_path();
+        let cache = token_cache_path()?;
         if cache.exists() {
             std::fs::remove_file(&cache)?;
             eprintln!("Removed cached token at {}", cache.display());
         }
     }
 
-    let secret = yup_oauth2::read_application_secret(credentials_path())
+    let secret = yup_oauth2::read_application_secret(credentials_path()?)
         .await
         .context("failed to read credentials.json")?;
 
@@ -58,7 +58,7 @@ pub async fn cmd_auth(no_browser_flag: bool, force: bool, config: &Config) -> Re
         secret,
         yup_oauth2::InstalledFlowReturnMethod::HTTPRedirect,
     )
-    .persist_tokens_to_disk(token_cache_path());
+    .persist_tokens_to_disk(token_cache_path()?);
 
     let no_browser = no_browser_flag || config.no_browser();
     if !no_browser {
@@ -77,7 +77,7 @@ pub async fn cmd_auth(no_browser_flag: bool, force: bool, config: &Config) -> Re
 
     eprintln!(
         "Authentication successful. Token cached to {}",
-        token_cache_path().display()
+        token_cache_path()?.display()
     );
     Ok(())
 }

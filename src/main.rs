@@ -5,6 +5,7 @@ mod helpers;
 mod models;
 
 use anyhow::{Context, Result, bail};
+use chrono::NaiveDate;
 use clap::{Args, CommandFactory, Parser, Subcommand};
 use serde_json::json;
 
@@ -29,6 +30,10 @@ struct Cli {
     /// Output as JSON instead of human-readable text.
     #[arg(long, global = true, default_value_t = false)]
     json: bool,
+
+    /// Suppress informational output; only show data and errors.
+    #[arg(long, global = true, default_value_t = false)]
+    quiet: bool,
 
     #[command(subcommand)]
     command: Command,
@@ -179,6 +184,19 @@ struct ListArgs {
     /// Calendar name (default: from config).
     #[arg(long)]
     calendar_name: Option<String>,
+    /// Only show events starting after this date (RFC3339 or YYYY-MM-DD).
+    #[arg(long)]
+    starts_after: Option<String>,
+    /// Only show events starting before this date (RFC3339 or YYYY-MM-DD).
+    #[arg(long)]
+    starts_before: Option<String>,
+    /// Case-insensitive substring search in summary and description.
+    #[arg(long)]
+    search: Option<String>,
+    /// Filter events that have a specific property key=value pair.
+    /// If just KEY is given (no =), filter events that have that key with any value.
+    #[arg(long)]
+    has_property: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -263,6 +281,42 @@ async fn fetch_events(
     Ok((calendar_id, events))
 }
 
+// --- Filter helpers ---
+
+/// Parse a date string (RFC3339 or YYYY-MM-DD) into a chrono DateTime<chrono::FixedOffset>.
+/// For YYYY-MM-DD, midnight UTC is used.
+fn parse_filter_date(s: &str) -> Result<chrono::DateTime<chrono::FixedOffset>> {
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+        return Ok(dt);
+    }
+    let nd = NaiveDate::parse_from_str(s, "%Y-%m-%d")
+        .with_context(|| format!("cannot parse '{s}' as RFC3339 or YYYY-MM-DD"))?;
+    let ndt = nd.and_hms_opt(0, 0, 0).unwrap();
+    Ok(chrono::DateTime::<chrono::FixedOffset>::from_naive_utc_and_offset(
+        ndt,
+        chrono::FixedOffset::east_opt(0).unwrap(),
+    ))
+}
+
+/// Extract an event's start time as a DateTime for comparison.
+fn event_start_to_datetime(edt: &models::EventDateTime) -> Option<chrono::DateTime<chrono::FixedOffset>> {
+    if let Some(ref dt_str) = edt.date_time {
+        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(dt_str) {
+            return Some(dt);
+        }
+    }
+    if let Some(ref d_str) = edt.date {
+        if let Ok(nd) = NaiveDate::parse_from_str(d_str, "%Y-%m-%d") {
+            let ndt = nd.and_hms_opt(0, 0, 0).unwrap();
+            return Some(chrono::DateTime::<chrono::FixedOffset>::from_naive_utc_and_offset(
+                ndt,
+                chrono::FixedOffset::east_opt(0).unwrap(),
+            ));
+        }
+    }
+    None
+}
+
 // --- Main ---
 
 #[tokio::main]
@@ -310,7 +364,7 @@ async fn main() -> Result<()> {
         Command::ListCalendars => {
             let calendars = client.list_calendars().await?;
             if calendars.is_empty() {
-                println!("No calendars found.");
+                if !cli.quiet { println!("No calendars found."); }
             } else {
                 for cal in &calendars {
                     print_calendar(cal, cli.json);
@@ -319,10 +373,78 @@ async fn main() -> Result<()> {
         }
         Command::List(args) => {
             let (_, events) = fetch_events(&client, args.calendar_name.as_deref(), &config).await?;
-            if events.is_empty() {
-                println!("No events found.");
+
+            // Parse filter dates once
+            let starts_after = args.starts_after.as_deref().map(parse_filter_date)
+                .transpose().context("invalid --starts-after date")?;
+            let starts_before = args.starts_before.as_deref().map(parse_filter_date)
+                .transpose().context("invalid --starts-before date")?;
+            let search_lower = args.search.as_ref().map(|s| s.to_lowercase());
+            let has_property = args.has_property.as_deref().map(|s| {
+                if let Some((k, v)) = s.split_once('=') {
+                    (k.to_string(), Some(v.to_string()))
+                } else {
+                    (s.to_string(), None)
+                }
+            });
+
+            let filtered: Vec<_> = events.iter().filter(|event| {
+                // --starts-after filter
+                if let Some(ref after) = starts_after {
+                    if let Some(start) = &event.start {
+                        let event_dt = event_start_to_datetime(start);
+                        if let Some(evt) = event_dt {
+                            if evt <= *after {
+                                return false;
+                            }
+                        }
+                    }
+                }
+                // --starts-before filter
+                if let Some(ref before) = starts_before {
+                    if let Some(start) = &event.start {
+                        let event_dt = event_start_to_datetime(start);
+                        if let Some(evt) = event_dt {
+                            if evt >= *before {
+                                return false;
+                            }
+                        }
+                    }
+                }
+                // --search filter
+                if let Some(ref pattern) = search_lower {
+                    let summary_match = event.summary.as_ref()
+                        .is_some_and(|s| s.to_lowercase().contains(pattern));
+                    let desc_match = event.description.as_ref()
+                        .is_some_and(|d| d.to_lowercase().contains(pattern));
+                    if !summary_match && !desc_match {
+                        return false;
+                    }
+                }
+                // --has-property filter
+                if let Some((ref key, ref val)) = has_property {
+                    let shared = event.extended_properties.as_ref()
+                        .and_then(|p| p.shared.as_ref());
+                    match val {
+                        Some(expected) => {
+                            if !shared.is_some_and(|s| s.get(key).is_some_and(|v| v == expected)) {
+                                return false;
+                            }
+                        }
+                        None => {
+                            if !shared.is_some_and(|s| s.contains_key(key)) {
+                                return false;
+                            }
+                        }
+                    }
+                }
+                true
+            }).collect();
+
+            if filtered.is_empty() {
+                if !cli.quiet { println!("No events found."); }
             } else {
-                for event in &events {
+                for event in &filtered {
                     print_event(event, cli.show_builtin, cli.json);
                 }
             }
@@ -334,7 +456,7 @@ async fn main() -> Result<()> {
                 let start = parse_event_time(&args.start, false)?;
                 let end = parse_event_time(&args.end, true)?;
                 let event = client.create_event(calendar_id, &args.summary, &start, &end, args.description.as_deref(), args.location.as_deref()).await?;
-                println!("Created event:");
+                if !cli.quiet { println!("Created event:"); }
                 print_event(&event, cli.show_builtin, cli.json);
             }
             EventAction::Update(args) => {
@@ -348,14 +470,14 @@ async fn main() -> Result<()> {
                     args.location.as_deref(),
                 )?;
                 let event = client.update_event(calendar_id, &args.event_id, &payload).await?;
-                println!("Updated event:");
+                if !cli.quiet { println!("Updated event:"); }
                 print_event(&event, cli.show_builtin, cli.json);
             }
             EventAction::Delete(args) => {
                 let calendars = client.list_calendars().await?;
                 let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), &config)?;
                 client.delete_event(calendar_id, &args.event_id).await?;
-                println!("Deleted event '{}'.", args.event_id);
+                if !cli.quiet { println!("Deleted event '{}'.", args.event_id); }
             }
         },
         Command::Check(args) => {
@@ -367,7 +489,7 @@ async fn main() -> Result<()> {
 
             let (_, events) = fetch_events(&client, args.calendar_name.as_deref(), &config).await?;
             if events.is_empty() {
-                println!("No events found.");
+                if !cli.quiet { println!("No events found."); }
                 return Ok(());
             }
 
@@ -417,10 +539,12 @@ async fn main() -> Result<()> {
                 }
             }
 
-            if issues == 0 {
-                println!("All {} event(s) pass checks.", events.len());
-            } else {
-                println!("\n{issues} issue(s) in {events_with_issues} event(s) out of {}.", events.len());
+            if !cli.quiet {
+                if issues == 0 {
+                    println!("All {} event(s) pass checks.", events.len());
+                } else {
+                    println!("\n{issues} issue(s) in {events_with_issues} event(s) out of {}.", events.len());
+                }
             }
         }
         Command::Properties { action } => match action {
@@ -445,7 +569,7 @@ async fn main() -> Result<()> {
 
                 let (calendar_id, events) = fetch_events(&client, args.calendar_name.as_deref(), &config).await?;
                 if events.is_empty() {
-                    println!("No events found.");
+                    if !cli.quiet { println!("No events found."); }
                     return Ok(());
                 }
 
@@ -455,16 +579,17 @@ async fn main() -> Result<()> {
                     keys
                 };
 
-                println!("Adding properties to {} event(s)\n", events.len());
+                if !cli.quiet { println!("Adding properties to {} event(s)\n", events.len()); }
 
                 let mut updated = 0u32;
                 let mut skipped = 0u32;
+                let mut skipped_no_id = 0u32;
                 for event in &events {
                     let summary = event.summary_or_default();
                     let start = event.start_str();
                     let event_id = match &event.id {
                         Some(id) => id,
-                        None => continue,
+                        None => { skipped_no_id += 1; continue; }
                     };
 
                     let existing = event.shared_properties();
@@ -481,7 +606,7 @@ async fn main() -> Result<()> {
                                 Some(true) => {}
                                 Some(false) => { skipped += 1; continue; }
                                 None => {
-                                    println!("\nQuit. {updated} updated, {skipped} skipped.");
+                                    if !cli.quiet { println!("\nQuit. {updated} updated, {skipped} skipped."); }
                                     return Ok(());
                                 }
                             }
@@ -490,7 +615,7 @@ async fn main() -> Result<()> {
                         let mut new_props = existing;
                         new_props.insert(key.clone(), value.clone());
                         client.patch_event_properties(&calendar_id, event_id, &new_props).await?;
-                        println!("  set on: {summary} ({start})");
+                        if !cli.quiet { println!("  set on: {summary} ({start})"); }
                         updated += 1;
                     } else {
                         eprintln!("Event: {summary} ({start})");
@@ -526,7 +651,10 @@ async fn main() -> Result<()> {
                     }
                 }
 
-                println!("Done. {updated} updated, {skipped} skipped.");
+                if skipped_no_id > 0 {
+                    eprintln!("Warning: skipped {skipped_no_id} event(s) with no ID");
+                }
+                if !cli.quiet { println!("Done. {updated} updated, {skipped} skipped."); }
             }
             PropertiesAction::Check(args) => {
                 let properties = config.properties.as_ref()
@@ -537,7 +665,7 @@ async fn main() -> Result<()> {
 
                 let (_, events) = fetch_events(&client, args.calendar_name.as_deref(), &config).await?;
                 if events.is_empty() {
-                    println!("No events found.");
+                    if !cli.quiet { println!("No events found."); }
                     return Ok(());
                 }
 
@@ -581,27 +709,30 @@ async fn main() -> Result<()> {
                     }
                 }
 
-                if issues == 0 {
-                    println!("All {} event(s) have valid properties.", events.len());
-                } else {
-                    println!("\n{issues} issue(s) found across {} event(s).", events.len());
+                if !cli.quiet {
+                    if issues == 0 {
+                        println!("All {} event(s) have valid properties.", events.len());
+                    } else {
+                        println!("\n{issues} issue(s) found across {} event(s).", events.len());
+                    }
                 }
             }
             PropertiesAction::Delete(args) => {
                 let (calendar_id, events) = fetch_events(&client, args.calendar_name.as_deref(), &config).await?;
                 if events.is_empty() {
-                    println!("No events found.");
+                    if !cli.quiet { println!("No events found."); }
                     return Ok(());
                 }
 
                 let mut updated = 0u32;
                 let mut skipped = 0u32;
+                let mut skipped_no_id = 0u32;
                 for event in &events {
                     let summary = event.summary_or_default();
                     let start = event.start_str();
                     let event_id = match &event.id {
                         Some(id) => id,
-                        None => continue,
+                        None => { skipped_no_id += 1; continue; }
                     };
 
                     let existing = event.shared_properties();
@@ -617,34 +748,38 @@ async fn main() -> Result<()> {
                             Some(true) => {}
                             Some(false) => { skipped += 1; continue; }
                             None => {
-                                println!("\nQuit. {updated} deleted, {skipped} skipped.");
+                                if !cli.quiet { println!("\nQuit. {updated} deleted, {skipped} skipped."); }
                                 return Ok(());
                             }
                         }
                     }
 
                     client.delete_property(&calendar_id, event_id, &args.key).await?;
-                    println!("  deleted from: {summary} ({start})");
+                    if !cli.quiet { println!("  deleted from: {summary} ({start})"); }
                     updated += 1;
                 }
 
-                println!("\nDone. {updated} deleted, {skipped} skipped.");
+                if skipped_no_id > 0 {
+                    eprintln!("Warning: skipped {skipped_no_id} event(s) with no ID");
+                }
+                if !cli.quiet { println!("\nDone. {updated} deleted, {skipped} skipped."); }
             }
             PropertiesAction::Rename(args) => {
                 let (calendar_id, events) = fetch_events(&client, args.calendar_name.as_deref(), &config).await?;
                 if events.is_empty() {
-                    println!("No events found.");
+                    if !cli.quiet { println!("No events found."); }
                     return Ok(());
                 }
 
                 let mut updated = 0u32;
                 let mut skipped = 0u32;
+                let mut skipped_no_id = 0u32;
                 for event in &events {
                     let summary = event.summary_or_default();
                     let start = event.start_str();
                     let event_id = match &event.id {
                         Some(id) => id,
-                        None => continue,
+                        None => { skipped_no_id += 1; continue; }
                     };
 
                     let mut existing = event.shared_properties();
@@ -662,7 +797,7 @@ async fn main() -> Result<()> {
                             Some(true) => {}
                             Some(false) => { skipped += 1; continue; }
                             None => {
-                                println!("\nQuit. {updated} renamed, {skipped} skipped.");
+                                if !cli.quiet { println!("\nQuit. {updated} renamed, {skipped} skipped."); }
                                 return Ok(());
                             }
                         }
@@ -670,11 +805,14 @@ async fn main() -> Result<()> {
 
                     existing.insert(args.to.clone(), value);
                     client.patch_event_properties(&calendar_id, event_id, &existing).await?;
-                    println!("  renamed on: {summary} ({start})");
+                    if !cli.quiet { println!("  renamed on: {summary} ({start})"); }
                     updated += 1;
                 }
 
-                println!("\nDone. {updated} renamed, {skipped} skipped.");
+                if skipped_no_id > 0 {
+                    eprintln!("Warning: skipped {skipped_no_id} event(s) with no ID");
+                }
+                if !cli.quiet { println!("\nDone. {updated} renamed, {skipped} skipped."); }
             }
             PropertiesAction::Edit(args) => {
                 let properties = config.properties.as_ref()
@@ -685,7 +823,7 @@ async fn main() -> Result<()> {
 
                 let (calendar_id, events) = fetch_events(&client, args.calendar_name.as_deref(), &config).await?;
                 if events.is_empty() {
-                    println!("No events found.");
+                    if !cli.quiet { println!("No events found."); }
                     return Ok(());
                 }
 
@@ -696,13 +834,14 @@ async fn main() -> Result<()> {
                 };
 
                 let mut updated = 0u32;
+                let mut skipped_no_id = 0u32;
                 for event in &events {
                     let summary = event.summary_or_default();
                     let start = event.start_str();
                     let end = event.end_str();
                     let event_id = match &event.id {
                         Some(id) => id,
-                        None => continue,
+                        None => { skipped_no_id += 1; continue; }
                     };
 
                     let mut current = event.shared_properties();
@@ -778,7 +917,7 @@ async fn main() -> Result<()> {
                                 updated += 1;
                                 eprintln!("  saved.");
                             }
-                            println!("\nQuit. {updated} event(s) updated.");
+                            if !cli.quiet { println!("\nQuit. {updated} event(s) updated."); }
                             return Ok(());
                         }
 
@@ -835,15 +974,20 @@ async fn main() -> Result<()> {
                     }
                 }
 
-                println!("\nDone. {updated} event(s) updated.");
+                if skipped_no_id > 0 {
+                    eprintln!("Warning: skipped {skipped_no_id} event(s) with no ID");
+                }
+                if !cli.quiet { println!("\nDone. {updated} event(s) updated."); }
             }
         },
         Command::Calendar { action } => match action {
             CalendarAction::Create { name } => {
                 let calendar = client.create_calendar(&name).await?;
                 let id = calendar["id"].as_str().unwrap_or("<unknown>");
-                println!("Created public calendar '{name}'");
-                println!("  id: {id}");
+                if !cli.quiet {
+                    println!("Created public calendar '{name}'");
+                    println!("  id: {id}");
+                }
             }
         },
         Command::MoveEvents(args) => {
@@ -859,19 +1003,21 @@ async fn main() -> Result<()> {
                 .context(format!("no calendar named '{}' found", args.target))?;
             let target_id = target_cal.id.as_deref().context("target calendar has no id")?.to_string();
 
-            println!("Moving events from '{}' to '{}'", args.source, args.target);
-            if !args.all {
-                println!("  interactive mode: y=move, n=skip, q=quit");
+            if !cli.quiet { println!("Moving events from '{}' to '{}'", args.source, args.target); }
+            if !cli.quiet {
+                if !args.all {
+                    println!("  interactive mode: y=move, n=skip, q=quit");
+                }
+                println!();
             }
-            println!();
 
             let events = client.list_all_events(&source_id).await?;
             if events.is_empty() {
-                println!("No events found in '{}'.", args.source);
+                if !cli.quiet { println!("No events found in '{}'.", args.source); }
                 return Ok(());
             }
 
-            println!("Found {} event(s)\n", events.len());
+            if !cli.quiet { println!("Found {} event(s)\n", events.len()); }
 
             let mut moved = 0u32;
             let mut skipped = 0u32;
@@ -893,14 +1039,14 @@ async fn main() -> Result<()> {
                         Some(true) => {}
                         Some(false) => { skipped += 1; continue; }
                         None => {
-                            println!("\nQuit. {moved} event(s) moved, {skipped} skipped.");
+                            if !cli.quiet { println!("\nQuit. {moved} event(s) moved, {skipped} skipped."); }
                             return Ok(());
                         }
                     }
                 }
 
                 if args.dry_run {
-                    println!("  [dry-run] would move: {summary} ({start})");
+                    if !cli.quiet { println!("  [dry-run] would move: {summary} ({start})"); }
                     moved += 1;
                 } else {
                     let mut payload = json!({ "summary": summary });
@@ -922,15 +1068,17 @@ async fn main() -> Result<()> {
 
                     client.insert_event_raw(&target_id, &payload).await?;
                     client.delete_event(&source_id, event_id).await?;
-                    println!("  moved: {summary} ({start})");
+                    if !cli.quiet { println!("  moved: {summary} ({start})"); }
                     moved += 1;
                 }
             }
 
-            if args.dry_run {
-                println!("\nDry run complete. {moved} event(s) would be moved, {skipped} skipped.");
-            } else {
-                println!("\nDone. {moved} event(s) moved to '{}', {skipped} skipped.", args.target);
+            if !cli.quiet {
+                if args.dry_run {
+                    println!("\nDry run complete. {moved} event(s) would be moved, {skipped} skipped.");
+                } else {
+                    println!("\nDone. {moved} event(s) moved to '{}', {skipped} skipped.", args.target);
+                }
             }
         }
         Command::Auth(_) | Command::Complete { .. } | Command::Defconfig => unreachable!(),

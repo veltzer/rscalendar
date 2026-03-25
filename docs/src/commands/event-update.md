@@ -1,11 +1,11 @@
-# update
+# event update
 
 Update fields on an existing calendar event. Only the fields you specify are changed; all others remain unchanged.
 
 ## Usage
 
 ```bash
-rscalendar update --event-id <ID> [OPTIONS]
+rscalendar event update --event-id <ID> [OPTIONS]
 ```
 
 ## Options
@@ -27,11 +27,11 @@ At least one field must be provided.
 Rename an event:
 
 ```bash
-rscalendar update --event-id abc123 --summary "New Title"
+rscalendar event update --event-id abc123 --summary "New Title"
 ```
 
 Change the time and location:
 
 ```bash
-rscalendar update --event-id abc123 --start "2026-04-02T10:00:00+03:00" --end "2026-04-02T11:00:00+03:00" --location "Room B"
+rscalendar event update --event-id abc123 --start "2026-04-02T10:00:00+03:00" --end "2026-04-02T11:00:00+03:00" --location "Room B"
 ```

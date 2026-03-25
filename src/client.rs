@@ -20,13 +20,13 @@ pub struct GoogleCalendarClient {
 
 impl GoogleCalendarClient {
     pub async fn from_cache() -> Result<Self> {
-        let cache_path = token_cache_path();
+        let cache_path = token_cache_path()?;
         if !cache_path.exists() {
             eprintln!("Error: not authenticated. Run 'rscalendar auth' first.");
             std::process::exit(1);
         }
 
-        let secret = yup_oauth2::read_application_secret(credentials_path())
+        let secret = yup_oauth2::read_application_secret(credentials_path()?)
             .await
             .context("failed to read credentials.json")?;
 
@@ -300,11 +300,25 @@ pub fn resolve_calendar_id<'a>(
     let name = name
         .or(config.calendar_name.as_deref())
         .context("no calendar name specified; use --calendar-name or set calendar_name in config.toml")?;
-    let cal = calendars
+    let matches: Vec<&CalendarListEntry> = calendars
         .iter()
-        .find(|c| c.summary.as_deref() == Some(name))
-        .with_context(|| format!("no calendar named '{name}' found"))?;
-    cal.id
+        .filter(|c| c.summary.as_deref() == Some(name))
+        .collect();
+    if matches.is_empty() {
+        bail!("no calendar named '{name}' found");
+    }
+    if matches.len() > 1 {
+        let ids: Vec<String> = matches
+            .iter()
+            .map(|c| c.id.as_deref().unwrap_or("<no id>").to_string())
+            .collect();
+        bail!(
+            "multiple calendars named '{name}' found (IDs: {}); use a unique calendar name",
+            ids.join(", ")
+        );
+    }
+    matches[0]
+        .id
         .as_deref()
         .context("calendar has no id")
 }

@@ -1,11 +1,11 @@
-# create
+# event create
 
 Create a new calendar event.
 
 ## Usage
 
 ```bash
-rscalendar create --summary <TEXT> --start <TIME> --end <TIME> [OPTIONS]
+rscalendar event create --summary <TEXT> --start <TIME> --end <TIME> [OPTIONS]
 ```
 
 ## Options
@@ -29,11 +29,11 @@ rscalendar create --summary <TEXT> --start <TIME> --end <TIME> [OPTIONS]
 Create an all-day event:
 
 ```bash
-rscalendar create --summary "Holiday" --start 2026-04-01 --end 2026-04-01
+rscalendar event create --summary "Holiday" --start 2026-04-01 --end 2026-04-01
 ```
 
 Create a timed event with location:
 
 ```bash
-rscalendar create --summary "Lunch" --start "2026-04-01T12:00:00+03:00" --end "2026-04-01T13:00:00+03:00" --location "Cafe"
+rscalendar event create --summary "Lunch" --start "2026-04-01T12:00:00+03:00" --end "2026-04-01T13:00:00+03:00" --location "Cafe"
 ```

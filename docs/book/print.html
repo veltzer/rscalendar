@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-453fcd2c.js";
+            window.path_to_searchindex_js = "searchindex-10132a5e.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-30e86ef9.js"></script>
+        <script src="toc-8bd398f6.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -298,14 +298,16 @@ cargo build --release
 <tbody>
 <tr><td><a href="#list-calendars">list-calendars</a></td><td>List all accessible calendars</td></tr>
 <tr><td><a href="#list">list</a></td><td>List all events for a calendar</td></tr>
-<tr><td><a href="#create">create</a></td><td>Create a new event</td></tr>
-<tr><td><a href="#update">update</a></td><td>Update fields on an existing event</td></tr>
-<tr><td><a href="#delete">delete</a></td><td>Delete an event</td></tr>
+<tr><td><a href="#event-create">event create</a></td><td>Create a new event</td></tr>
+<tr><td><a href="#event-update">event update</a></td><td>Update fields on an existing event</td></tr>
+<tr><td><a href="#event-delete">event delete</a></td><td>Delete an event</td></tr>
 <tr><td><a href="#calendar-create">calendar create</a></td><td>Create a new public calendar</td></tr>
+<tr><td><a href="#check">check</a></td><td>Check events against property rules</td></tr>
 <tr><td><a href="#properties-add">properties add</a></td><td>Add properties to events</td></tr>
 <tr><td><a href="#properties-check">properties check</a></td><td>Validate event properties against config</td></tr>
 <tr><td><a href="#properties-delete">properties delete</a></td><td>Delete a property from events</td></tr>
 <tr><td><a href="#properties-rename">properties rename</a></td><td>Rename a property key on events</td></tr>
+<tr><td><a href="#properties-edit">properties edit</a></td><td>Edit a property value on events</td></tr>
 <tr><td><a href="#move-events">move-events</a></td><td>Move events between calendars</td></tr>
 <tr><td><a href="#auth">auth</a></td><td>Authenticate with Google</td></tr>
 <tr><td><a href="#defconfig">defconfig</a></td><td>Print default configuration</td></tr>
@@ -380,10 +382,10 @@ Holidays in Israel
 <pre><code class="language-bash">rscalendar list --calendar-name Teaching
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="create"><a class="header" href="#create">create</a></h1>
+<h1 id="event-create"><a class="header" href="#event-create">event create</a></h1>
 <p>Create a new calendar event.</p>
 <h2 id="usage-2"><a class="header" href="#usage-2">Usage</a></h2>
-<pre><code class="language-bash">rscalendar create --summary &lt;TEXT&gt; --start &lt;TIME&gt; --end &lt;TIME&gt; [OPTIONS]
+<pre><code class="language-bash">rscalendar event create --summary &lt;TEXT&gt; --start &lt;TIME&gt; --end &lt;TIME&gt; [OPTIONS]
 </code></pre>
 <h2 id="options-1"><a class="header" href="#options-1">Options</a></h2>
 <div class="table-wrapper">
@@ -408,16 +410,16 @@ Holidays in Israel
 </ul>
 <h2 id="examples-1"><a class="header" href="#examples-1">Examples</a></h2>
 <p>Create an all-day event:</p>
-<pre><code class="language-bash">rscalendar create --summary "Holiday" --start 2026-04-01 --end 2026-04-01
+<pre><code class="language-bash">rscalendar event create --summary "Holiday" --start 2026-04-01 --end 2026-04-01
 </code></pre>
 <p>Create a timed event with location:</p>
-<pre><code class="language-bash">rscalendar create --summary "Lunch" --start "2026-04-01T12:00:00+03:00" --end "2026-04-01T13:00:00+03:00" --location "Cafe"
+<pre><code class="language-bash">rscalendar event create --summary "Lunch" --start "2026-04-01T12:00:00+03:00" --end "2026-04-01T13:00:00+03:00" --location "Cafe"
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="update"><a class="header" href="#update">update</a></h1>
+<h1 id="event-update"><a class="header" href="#event-update">event update</a></h1>
 <p>Update fields on an existing calendar event. Only the fields you specify are changed; all others remain unchanged.</p>
 <h2 id="usage-3"><a class="header" href="#usage-3">Usage</a></h2>
-<pre><code class="language-bash">rscalendar update --event-id &lt;ID&gt; [OPTIONS]
+<pre><code class="language-bash">rscalendar event update --event-id &lt;ID&gt; [OPTIONS]
 </code></pre>
 <h2 id="options-2"><a class="header" href="#options-2">Options</a></h2>
 <div class="table-wrapper">
@@ -439,16 +441,16 @@ Holidays in Israel
 <p>At least one field must be provided.</p>
 <h2 id="examples-2"><a class="header" href="#examples-2">Examples</a></h2>
 <p>Rename an event:</p>
-<pre><code class="language-bash">rscalendar update --event-id abc123 --summary "New Title"
+<pre><code class="language-bash">rscalendar event update --event-id abc123 --summary "New Title"
 </code></pre>
 <p>Change the time and location:</p>
-<pre><code class="language-bash">rscalendar update --event-id abc123 --start "2026-04-02T10:00:00+03:00" --end "2026-04-02T11:00:00+03:00" --location "Room B"
+<pre><code class="language-bash">rscalendar event update --event-id abc123 --start "2026-04-02T10:00:00+03:00" --end "2026-04-02T11:00:00+03:00" --location "Room B"
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="delete"><a class="header" href="#delete">delete</a></h1>
+<h1 id="event-delete"><a class="header" href="#event-delete">event delete</a></h1>
 <p>Delete a calendar event by ID.</p>
 <h2 id="usage-4"><a class="header" href="#usage-4">Usage</a></h2>
-<pre><code class="language-bash">rscalendar delete --event-id &lt;ID&gt; [OPTIONS]
+<pre><code class="language-bash">rscalendar event delete --event-id &lt;ID&gt; [OPTIONS]
 </code></pre>
 <h2 id="options-3"><a class="header" href="#options-3">Options</a></h2>
 <div class="table-wrapper">
@@ -463,13 +465,59 @@ Holidays in Israel
 </table>
 </div>
 <h2 id="examples-3"><a class="header" href="#examples-3">Examples</a></h2>
-<pre><code class="language-bash">rscalendar delete --event-id abc123
+<pre><code class="language-bash">rscalendar event delete --event-id abc123
 </code></pre>
 <p>The event ID can be found in the output of <code>rscalendar list</code>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="check"><a class="header" href="#check">check</a></h1>
+<p>Check that events have all required properties based on their <code>type</code> property. The rules are defined in the <code>[check]</code> section of <code>config.toml</code>.</p>
+<h2 id="usage-5"><a class="header" href="#usage-5">Usage</a></h2>
+<pre><code class="language-bash">rscalendar check [OPTIONS]
+</code></pre>
+<h2 id="options-4"><a class="header" href="#options-4">Options</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Option</th><th>Required</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--calendar-name &lt;NAME&gt;</code></td><td>No</td><td>Calendar name (default: from config)</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="how-it-works-1"><a class="header" href="#how-it-works-1">How It Works</a></h2>
+<ol>
+<li>Reads the <code>[check]</code> section from config, which maps each <code>type</code> value to a list of required property keys</li>
+<li>For each event, looks up its <code>type</code> property</li>
+<li>Verifies that all required properties for that type are present</li>
+</ol>
+<h2 id="reports"><a class="header" href="#reports">Reports</a></h2>
+<ul>
+<li>Events missing a <code>type</code> property</li>
+<li>Events with a <code>type</code> value not defined in <code>[check]</code></li>
+<li>Events missing required properties for their type</li>
+</ul>
+<h2 id="config"><a class="header" href="#config">Config</a></h2>
+<pre><code class="language-toml">[check]
+teaching = ["client", "company", "course"]
+working = ["client", "company"]
+call = ["client", "company"]
+meeting = ["client", "company"]
+</code></pre>
+<p>This means: if an event has <code>type=teaching</code>, it must also have <code>client</code>, <code>company</code>, and <code>course</code> properties set.</p>
+<h2 id="example-1"><a class="header" href="#example-1">Example</a></h2>
+<pre><code class="language-bash">$ rscalendar check
+Linux Workshop (2026-04-01T09:00:00+03:00):
+  - missing required property 'course' (required for type 'teaching')
+Team Sync (2026-04-02T14:00:00+03:00):
+  - missing 'type' property
+
+2 issue(s) in 2 event(s) out of 10.
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="calendar-create"><a class="header" href="#calendar-create">calendar create</a></h1>
 <p>Create a new public Google Calendar.</p>
-<h2 id="usage-5"><a class="header" href="#usage-5">Usage</a></h2>
+<h2 id="usage-6"><a class="header" href="#usage-6">Usage</a></h2>
 <pre><code class="language-bash">rscalendar calendar create &lt;NAME&gt;
 </code></pre>
 <h2 id="details"><a class="header" href="#details">Details</a></h2>
@@ -482,10 +530,10 @@ Created public calendar 'Teaching'
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="properties-add"><a class="header" href="#properties-add">properties add</a></h1>
 <p>Add shared extended properties to events. Validates keys and values against the <code>[properties]</code> section in <code>config.toml</code>.</p>
-<h2 id="usage-6"><a class="header" href="#usage-6">Usage</a></h2>
+<h2 id="usage-7"><a class="header" href="#usage-7">Usage</a></h2>
 <pre><code class="language-bash">rscalendar properties add [OPTIONS]
 </code></pre>
-<h2 id="options-4"><a class="header" href="#options-4">Options</a></h2>
+<h2 id="options-5"><a class="header" href="#options-5">Options</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -511,7 +559,7 @@ Created public calendar 'Teaching'
 <p>Skip prompting with <code>--all</code>:</p>
 <pre><code class="language-bash">rscalendar properties add --key company --value AgileSparks --all
 </code></pre>
-<h2 id="config"><a class="header" href="#config">Config</a></h2>
+<h2 id="config-1"><a class="header" href="#config-1">Config</a></h2>
 <p>Properties must be defined in <code>~/.config/rscalendar/config.toml</code>:</p>
 <pre><code class="language-toml">[properties]
 company = ["AgileSparks", "Intel", "Google"]
@@ -520,10 +568,10 @@ course = ["Linux Fundamentals", "Advanced Python"]
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="properties-check"><a class="header" href="#properties-check">properties check</a></h1>
 <p>Check that all event properties have keys and values defined in the <code>[properties]</code> section of <code>config.toml</code>.</p>
-<h2 id="usage-7"><a class="header" href="#usage-7">Usage</a></h2>
+<h2 id="usage-8"><a class="header" href="#usage-8">Usage</a></h2>
 <pre><code class="language-bash">rscalendar properties check [OPTIONS]
 </code></pre>
-<h2 id="options-5"><a class="header" href="#options-5">Options</a></h2>
+<h2 id="options-6"><a class="header" href="#options-6">Options</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -540,7 +588,7 @@ course = ["Linux Fundamentals", "Advanced Python"]
 <li><strong>Invalid values</strong> — property values not in the allowed list for that key</li>
 <li><strong>Unknown properties</strong> — keys on the event that are not defined in config</li>
 </ul>
-<h2 id="example-1"><a class="header" href="#example-1">Example</a></h2>
+<h2 id="example-2"><a class="header" href="#example-2">Example</a></h2>
 <pre><code class="language-bash">$ rscalendar properties check
 Team Meeting (2026-04-01T10:00:00+03:00):
   - missing property 'course'
@@ -552,10 +600,10 @@ Workshop (2026-04-02T09:00:00+03:00):
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="properties-delete"><a class="header" href="#properties-delete">properties delete</a></h1>
 <p>Delete a shared extended property from events.</p>
-<h2 id="usage-8"><a class="header" href="#usage-8">Usage</a></h2>
+<h2 id="usage-9"><a class="header" href="#usage-9">Usage</a></h2>
 <pre><code class="language-bash">rscalendar properties delete --key &lt;KEY&gt; [OPTIONS]
 </code></pre>
-<h2 id="options-6"><a class="header" href="#options-6">Options</a></h2>
+<h2 id="options-7"><a class="header" href="#options-7">Options</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -581,10 +629,10 @@ Workshop (2026-04-02T09:00:00+03:00):
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="properties-rename"><a class="header" href="#properties-rename">properties rename</a></h1>
 <p>Rename a shared extended property key on events. The value is preserved.</p>
-<h2 id="usage-9"><a class="header" href="#usage-9">Usage</a></h2>
+<h2 id="usage-10"><a class="header" href="#usage-10">Usage</a></h2>
 <pre><code class="language-bash">rscalendar properties rename --from &lt;OLD_KEY&gt; --to &lt;NEW_KEY&gt; [OPTIONS]
 </code></pre>
-<h2 id="options-7"><a class="header" href="#options-7">Options</a></h2>
+<h2 id="options-8"><a class="header" href="#options-8">Options</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -609,12 +657,78 @@ Workshop (2026-04-02T09:00:00+03:00):
 <pre><code class="language-bash">rscalendar properties rename --from source_calendar --to client --all
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="properties-edit"><a class="header" href="#properties-edit">properties edit</a></h1>
+<p>Interactively edit properties on each event via TUI menus. For each event, you can add, change, or delete properties in a loop before moving to the next event.</p>
+<h2 id="usage-11"><a class="header" href="#usage-11">Usage</a></h2>
+<pre><code class="language-bash">rscalendar properties edit [OPTIONS]
+</code></pre>
+<h2 id="options-9"><a class="header" href="#options-9">Options</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Option</th><th>Required</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--calendar-name &lt;NAME&gt;</code></td><td>No</td><td>Calendar name (default: from config)</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="how-it-works-2"><a class="header" href="#how-it-works-2">How It Works</a></h2>
+<p>For each event, the TUI shows:</p>
+<ol>
+<li>The event name and start time</li>
+<li>Current properties</li>
+<li>A numbered menu of actions:
+<ul>
+<li><strong>add</strong> — for properties defined in config but not set on the event</li>
+<li><strong>change</strong> — for properties already set (pick a new value from the allowed list)</li>
+<li><strong>delete</strong> — remove a property from the event</li>
+<li><strong>n</strong> — save changes and move to the next event</li>
+<li><strong>q</strong> — save changes and quit</li>
+</ul>
+</li>
+</ol>
+<p>Changes are saved when you press <code>n</code> (next) or <code>q</code> (quit). If no changes were made, nothing is sent to the API.</p>
+<h2 id="example-session"><a class="header" href="#example-session">Example Session</a></h2>
+<pre><code>Event: Linux Workshop (2026-04-01T09:00:00+03:00)
+  company: AgileSparks
+  Actions:
+    1: change 'company'
+    2: delete 'company'
+    3: add 'course'
+    n: next event
+    q: quit
+  choice: 3
+  Select course:
+    1: Linux Fundamentals
+    2: Advanced Python
+    s: skip this property
+  choice: 1
+  company: AgileSparks
+  course: Linux Fundamentals
+  Actions:
+    1: change 'company'
+    2: delete 'company'
+    3: change 'course'
+    4: delete 'course'
+    n: next event
+    q: quit
+  choice: n
+  saved.
+</code></pre>
+<h2 id="config-2"><a class="header" href="#config-2">Config</a></h2>
+<p>Property keys and allowed values must be defined in <code>~/.config/rscalendar/config.toml</code>:</p>
+<pre><code class="language-toml">[properties]
+company = ["AgileSparks", "Intel", "Google"]
+course = ["Linux Fundamentals", "Advanced Python"]
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="move-events"><a class="header" href="#move-events">move-events</a></h1>
-<p>Move events from one calendar to another, optionally tagging each event with a shared extended property. Events are created in the target calendar and deleted from the source.</p>
-<h2 id="usage-10"><a class="header" href="#usage-10">Usage</a></h2>
+<p>Move events from one calendar to another. Events are created in the target calendar and deleted from the source.</p>
+<h2 id="usage-12"><a class="header" href="#usage-12">Usage</a></h2>
 <pre><code class="language-bash">rscalendar move-events --source &lt;NAME&gt; --target &lt;NAME&gt; [OPTIONS]
 </code></pre>
-<h2 id="options-8"><a class="header" href="#options-8">Options</a></h2>
+<h2 id="options-10"><a class="header" href="#options-10">Options</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -623,8 +737,6 @@ Workshop (2026-04-02T09:00:00+03:00):
 <tbody>
 <tr><td><code>--source &lt;NAME&gt;</code></td><td>Yes</td><td>Source calendar name to move events from</td></tr>
 <tr><td><code>--target &lt;NAME&gt;</code></td><td>Yes</td><td>Target calendar name to move events into</td></tr>
-<tr><td><code>--property-key &lt;KEY&gt;</code></td><td>No</td><td>Shared extended property key to set on moved events</td></tr>
-<tr><td><code>--property-value &lt;VALUE&gt;</code></td><td>No</td><td>Shared extended property value (requires <code>--property-key</code>)</td></tr>
 <tr><td><code>--interactive</code></td><td>No</td><td>Prompt for each event: y=move, n=skip, q=quit</td></tr>
 <tr><td><code>--dry-run</code></td><td>No</td><td>Show what would be done without making changes</td></tr>
 </tbody>
@@ -635,18 +747,18 @@ Workshop (2026-04-02T09:00:00+03:00):
 <pre><code class="language-bash">rscalendar move-events --source "Client - John" --target Teaching --dry-run
 </code></pre>
 <p>Interactively move events, choosing which ones to move:</p>
-<pre><code class="language-bash">rscalendar move-events --source "Client - John" --target Teaching --interactive --property-key client --property-value John
+<pre><code class="language-bash">rscalendar move-events --source "Client - John" --target Teaching --interactive
 </code></pre>
 <p>Move all events without prompting:</p>
-<pre><code class="language-bash">rscalendar move-events --source "Client - John" --target Teaching --property-key client --property-value John
+<pre><code class="language-bash">rscalendar move-events --source "Client - John" --target Teaching
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="auth"><a class="header" href="#auth">auth</a></h1>
 <p>Authenticate with Google via OAuth2 and cache the token locally.</p>
-<h2 id="usage-11"><a class="header" href="#usage-11">Usage</a></h2>
+<h2 id="usage-13"><a class="header" href="#usage-13">Usage</a></h2>
 <pre><code class="language-bash">rscalendar auth [OPTIONS]
 </code></pre>
-<h2 id="options-9"><a class="header" href="#options-9">Options</a></h2>
+<h2 id="options-11"><a class="header" href="#options-11">Options</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -671,17 +783,17 @@ Workshop (2026-04-02T09:00:00+03:00):
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="defconfig"><a class="header" href="#defconfig">defconfig</a></h1>
 <p>Print the default configuration file to stdout.</p>
-<h2 id="usage-12"><a class="header" href="#usage-12">Usage</a></h2>
+<h2 id="usage-14"><a class="header" href="#usage-14">Usage</a></h2>
 <pre><code class="language-bash">rscalendar defconfig
 </code></pre>
-<h2 id="example-2"><a class="header" href="#example-2">Example</a></h2>
+<h2 id="example-3"><a class="header" href="#example-3">Example</a></h2>
 <p>To create a fresh config file with all defaults commented out:</p>
 <pre><code class="language-bash">rscalendar defconfig &gt; ~/.config/rscalendar/config.toml
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="complete"><a class="header" href="#complete">complete</a></h1>
 <p>Generate shell completion scripts.</p>
-<h2 id="usage-13"><a class="header" href="#usage-13">Usage</a></h2>
+<h2 id="usage-15"><a class="header" href="#usage-15">Usage</a></h2>
 <pre><code class="language-bash">rscalendar complete &lt;SHELL&gt;
 </code></pre>
 <h2 id="supported-shells"><a class="header" href="#supported-shells">Supported Shells</a></h2>
@@ -706,7 +818,7 @@ Workshop (2026-04-02T09:00:00+03:00):
 <pre><code>~/.config/rscalendar/config.toml
 </code></pre>
 <p>The config file is optional. If missing, built-in defaults are used. All config values can be overridden by CLI flags.</p>
-<h2 id="options-10"><a class="header" href="#options-10">Options</a></h2>
+<h2 id="options-12"><a class="header" href="#options-12">Options</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -718,12 +830,26 @@ Workshop (2026-04-02T09:00:00+03:00):
 </tbody>
 </table>
 </div>
-<h2 id="example-3"><a class="header" href="#example-3">Example</a></h2>
+<h2 id="the-check-section"><a class="header" href="#the-check-section">The <code>[check]</code> Section</a></h2>
+<p>The <code>[check]</code> section defines required properties per event type. It is used by the <code>rscalendar check</code> command to validate that events have all expected properties.</p>
+<pre><code class="language-toml">[check]
+teaching = ["client", "company", "course"]
+working = ["client", "company"]
+call = ["client", "company"]
+meeting = ["client", "company"]
+</code></pre>
+<p>Each key is a <code>type</code> property value; its array lists the property keys that must be present on events of that type.</p>
+<h2 id="example-4"><a class="header" href="#example-4">Example</a></h2>
 <pre><code class="language-toml"># Use a specific calendar by default
 calendar_name = "Teaching"
 
 # Always print URL instead of opening browser (headless machines)
 no_browser = true
+
+# Required properties per event type
+[check]
+teaching = ["client", "company", "course"]
+working = ["client", "company"]
 </code></pre>
 <h2 id="precedence"><a class="header" href="#precedence">Precedence</a></h2>
 <p>CLI flags always win over config file values:</p>

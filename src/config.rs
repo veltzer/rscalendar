@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use anyhow::{Context, Result};
 use serde::Deserialize;
 
 #[derive(Debug, Default, Deserialize)]
@@ -14,7 +15,13 @@ pub struct Config {
 
 impl Config {
     pub fn load() -> Self {
-        let path = config_path();
+        let path = match config_path() {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("Warning: could not determine config path: {e}");
+                return Self::default();
+            }
+        };
         if !path.exists() {
             return Self::default();
         }
@@ -45,28 +52,30 @@ impl Config {
     }
 }
 
-pub fn config_dir() -> PathBuf {
-    let mut dir = dirs::home_dir().expect("Could not determine home directory");
+pub fn config_dir() -> Result<PathBuf> {
+    let mut dir = dirs::home_dir()
+        .context("Could not determine home directory")?;
     dir.push(".config");
     dir.push("rscalendar");
-    std::fs::create_dir_all(&dir).expect("Could not create config directory");
-    dir
+    std::fs::create_dir_all(&dir)
+        .context("Could not create config directory")?;
+    Ok(dir)
 }
 
-pub fn config_path() -> PathBuf {
-    config_dir().join("config.toml")
+pub fn config_path() -> Result<PathBuf> {
+    Ok(config_dir()?.join("config.toml"))
 }
 
-pub fn credentials_path() -> PathBuf {
-    let path = config_dir().join("credentials.json");
+pub fn credentials_path() -> Result<PathBuf> {
+    let path = config_dir()?.join("credentials.json");
     if !path.exists() {
         eprintln!("Error: credentials.json not found at {}", path.display());
         eprintln!("Download OAuth2 credentials from Google Cloud Console and place them there.");
         std::process::exit(1);
     }
-    path
+    Ok(path)
 }
 
-pub fn token_cache_path() -> PathBuf {
-    config_dir().join("token_cache.json")
+pub fn token_cache_path() -> Result<PathBuf> {
+    Ok(config_dir()?.join("token_cache.json"))
 }

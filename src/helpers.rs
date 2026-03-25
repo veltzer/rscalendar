@@ -42,6 +42,12 @@ pub fn build_event_patch_payload(
     Ok(payload)
 }
 
+/// Parse a user-supplied time string into an EventDateTime.
+///
+/// Accepts either RFC3339 (datetime with timezone) or YYYY-MM-DD (date-only).
+/// For date-only inputs, no timezone conversion is applied. This is intentional:
+/// Google Calendar treats date-only events as timezone-agnostic all-day events,
+/// so the bare date string is correct regardless of the user's local timezone.
 pub fn parse_event_time(input: &str, end_of_all_day_event: bool) -> Result<EventDateTime> {
     if let Ok(date_time) = DateTime::parse_from_rfc3339(input) {
         return Ok(EventDateTime {

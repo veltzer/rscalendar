@@ -1,11 +1,11 @@
-# delete
+# event delete
 
 Delete a calendar event by ID.
 
 ## Usage
 
 ```bash
-rscalendar delete --event-id <ID> [OPTIONS]
+rscalendar event delete --event-id <ID> [OPTIONS]
 ```
 
 ## Options
@@ -18,7 +18,7 @@ rscalendar delete --event-id <ID> [OPTIONS]
 ## Examples
 
 ```bash
-rscalendar delete --event-id abc123
+rscalendar event delete --event-id abc123
 ```
 
 The event ID can be found in the output of `rscalendar list`.
