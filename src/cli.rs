@@ -99,6 +99,18 @@ pub enum EventAction {
     Update(UpdateArgs),
     /// Delete an event.
     Delete(DeleteArgs),
+    /// Interactively edit an event's fields and properties.
+    Edit(EventEditArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct EventEditArgs {
+    /// Calendar name (default: from config).
+    #[arg(long)]
+    pub calendar_name: Option<String>,
+    /// Event ID to edit.
+    #[arg(long)]
+    pub event_id: String,
 }
 
 #[derive(Debug, Subcommand)]

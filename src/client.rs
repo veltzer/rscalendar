@@ -122,6 +122,13 @@ impl GoogleCalendarClient {
         Ok(calendar)
     }
 
+    pub async fn get_event(&self, calendar_id: &str, event_id: &str) -> Result<CalendarEvent> {
+        let url = format!("{API_BASE}/calendars/{}/events/{}", encode(calendar_id), encode(event_id));
+        let response = self.send_with_retry(|| self.authorized(self.http.get(&url))).await?;
+        let response = response.error_for_status().map_err(api_error)?;
+        response.json().await.context("failed to decode event")
+    }
+
     pub async fn list_all_events(&self, calendar_id: &str) -> Result<Vec<CalendarEvent>> {
         let mut all_events = Vec::new();
         let mut page_token: Option<String> = None;
