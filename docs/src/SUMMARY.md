@@ -10,6 +10,7 @@
     - [create](commands/create.md)
     - [update](commands/update.md)
     - [delete](commands/delete.md)
+    - [check](commands/check.md)
     - [calendar create](commands/calendar-create.md)
     - [properties add](commands/properties-add.md)
     - [properties check](commands/properties-check.md)

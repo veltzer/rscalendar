@@ -22,6 +22,8 @@ struct Config {
     no_browser: Option<bool>,
     /// Allowed property definitions: key -> list of allowed values.
     properties: Option<std::collections::HashMap<String, Vec<String>>>,
+    /// Check rules: type value -> list of required property keys.
+    check: Option<std::collections::HashMap<String, Vec<String>>>,
 }
 
 impl Config {
@@ -151,6 +153,8 @@ enum Command {
         #[command(subcommand)]
         action: CalendarAction,
     },
+    /// Check that events have all required properties based on their type.
+    Check(CheckArgs),
     /// Manage event properties.
     Properties {
         #[command(subcommand)]
@@ -235,6 +239,13 @@ struct PropertiesAddArgs {
     /// Apply to all events without prompting.
     #[arg(long, default_value_t = false)]
     all: bool,
+}
+
+#[derive(Debug, Args)]
+struct CheckArgs {
+    /// Calendar name (default: from config).
+    #[arg(long)]
+    calendar_name: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -1008,10 +1019,16 @@ async fn main() -> Result<()> {
 # Don't open browser during auth (useful for headless machines)
 # no_browser = false
 
-# Allowed properties for events (used by add-properties and check-properties)
+# Allowed properties for events
 # [properties]
+# type = [\"teaching\", \"working\", \"call\", \"meeting\"]
 # company = [\"Amdocs\", \"Intel\", \"Google\"]
 # course = [\"Linux Fundamentals\", \"Advanced Python\"]
+
+# Required properties per event type (used by 'check' command)
+# [check]
+# teaching = [\"client\", \"company\", \"course\"]
+# working = [\"client\", \"company\"]
 "
         );
         return Ok(());
@@ -1078,6 +1095,84 @@ async fn main() -> Result<()> {
             let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), &config)?;
             client.delete_event(calendar_id, &args.event_id).await?;
             println!("Deleted event '{}'.", args.event_id);
+        }
+        Command::Check(args) => {
+            let check_rules = config.check.as_ref()
+                .context("no [check] section in config.toml")?;
+            if check_rules.is_empty() {
+                bail!("no rules defined in [check] section of config.toml");
+            }
+
+            let calendars = client.list_calendars().await?;
+            let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), &config)?;
+            let events = client.list_all_events(calendar_id).await?;
+
+            if events.is_empty() {
+                println!("No events found.");
+                return Ok(());
+            }
+
+            let mut issues = 0u32;
+            let mut events_with_issues = 0u32;
+            for event in &events {
+                let summary = event.summary.as_deref().unwrap_or("<untitled>");
+                let start = event
+                    .start
+                    .as_ref()
+                    .map(EventDateTime::describe)
+                    .unwrap_or_else(|| "unknown".to_string());
+
+                let shared = event
+                    .extended_properties
+                    .as_ref()
+                    .and_then(|p| p.shared.as_ref());
+
+                // Get the event's type
+                let event_type = match shared.and_then(|s| s.get("type")) {
+                    Some(t) => t,
+                    None => {
+                        println!("{summary} ({start}):");
+                        println!("  - missing 'type' property");
+                        issues += 1;
+                        events_with_issues += 1;
+                        continue;
+                    }
+                };
+
+                // Look up required properties for this type
+                let required = match check_rules.get(event_type) {
+                    Some(r) => r,
+                    None => {
+                        println!("{summary} ({start}):");
+                        println!("  - unknown type '{event_type}' (not in [check] config)");
+                        issues += 1;
+                        events_with_issues += 1;
+                        continue;
+                    }
+                };
+
+                let mut event_issues: Vec<String> = Vec::new();
+                for key in required {
+                    if shared.and_then(|s| s.get(key)).is_none() {
+                        event_issues.push(format!("missing required property '{key}' (required for type '{event_type}')"));
+                    }
+                }
+
+                if !event_issues.is_empty() {
+                    println!("{summary} ({start}):");
+                    for issue in &event_issues {
+                        println!("  - {issue}");
+                    }
+                    issues += event_issues.len() as u32;
+                    events_with_issues += 1;
+                }
+            }
+
+            if issues == 0 {
+                println!("All {} event(s) pass checks.", events.len());
+            } else {
+                println!("\n{issues} issue(s) in {events_with_issues} event(s) out of {}.", events.len());
+            }
         }
         Command::Properties { action } => match action {
             PropertiesAction::Add(args) => {
