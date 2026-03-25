@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "rust";
             const default_dark_theme = "ayu";
-            window.path_to_searchindex_js = "searchindex-f70ae66c.js";
+            window.path_to_searchindex_js = "searchindex-453fcd2c.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-e651310d.js"></script>
+        <script src="toc-30e86ef9.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -296,20 +296,69 @@ cargo build --release
 <tr><th>Command</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><a href="#list">list</a></td><td>List upcoming events</td></tr>
+<tr><td><a href="#list-calendars">list-calendars</a></td><td>List all accessible calendars</td></tr>
+<tr><td><a href="#list">list</a></td><td>List all events for a calendar</td></tr>
 <tr><td><a href="#create">create</a></td><td>Create a new event</td></tr>
 <tr><td><a href="#update">update</a></td><td>Update fields on an existing event</td></tr>
 <tr><td><a href="#delete">delete</a></td><td>Delete an event</td></tr>
+<tr><td><a href="#calendar-create">calendar create</a></td><td>Create a new public calendar</td></tr>
+<tr><td><a href="#properties-add">properties add</a></td><td>Add properties to events</td></tr>
+<tr><td><a href="#properties-check">properties check</a></td><td>Validate event properties against config</td></tr>
+<tr><td><a href="#properties-delete">properties delete</a></td><td>Delete a property from events</td></tr>
+<tr><td><a href="#properties-rename">properties rename</a></td><td>Rename a property key on events</td></tr>
+<tr><td><a href="#move-events">move-events</a></td><td>Move events between calendars</td></tr>
 <tr><td><a href="#auth">auth</a></td><td>Authenticate with Google</td></tr>
+<tr><td><a href="#defconfig">defconfig</a></td><td>Print default configuration</td></tr>
 <tr><td><a href="#complete">complete</a></td><td>Generate shell completions</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="global-flags"><a class="header" href="#global-flags">Global Flags</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--show-builtin</code></td><td>Show “(built-in)” labels on standard Google Calendar fields</td></tr>
+<tr><td><code>--json</code></td><td>Output as JSON for processing with tools like <code>jq</code></td></tr>
 </tbody>
 </table>
 </div>
 <p>All commands that interact with the calendar require prior authentication via <code>rscalendar auth</code>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="list"><a class="header" href="#list">list</a></h1>
-<p>List upcoming events for a calendar.</p>
+<h1 id="list-calendars"><a class="header" href="#list-calendars">list-calendars</a></h1>
+<p>List all calendars accessible to the authenticated user.</p>
 <h2 id="usage"><a class="header" href="#usage">Usage</a></h2>
+<pre><code class="language-bash">rscalendar list-calendars
+</code></pre>
+<h2 id="output"><a class="header" href="#output">Output</a></h2>
+<p>For each calendar, shows:</p>
+<ul>
+<li><strong>Name</strong> (with <code>(primary)</code> marker for the default calendar)</li>
+<li><strong>id</strong> — the calendar ID to use with <code>--calendar-id</code> or in <code>config.toml</code></li>
+<li><strong>role</strong> — your access level (<code>owner</code>, <code>writer</code>, <code>reader</code>, <code>freeBusyReader</code>)</li>
+<li><strong>description</strong> — calendar description, if set</li>
+</ul>
+<h2 id="example"><a class="header" href="#example">Example</a></h2>
+<pre><code class="language-bash">$ rscalendar list-calendars
+My Calendar (primary)
+  id: user@gmail.com
+  role: owner
+
+Work
+  id: abc123@group.calendar.google.com
+  role: writer
+
+Holidays in Israel
+  id: en.jewish#holiday@group.v.calendar.google.com
+  role: reader
+</code></pre>
+<p>Use the <code>id</code> value as <code>--calendar-id</code> or set it as <code>calendar_id</code> in <code>~/.config/rscalendar/config.toml</code>.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="list"><a class="header" href="#list">list</a></h1>
+<p>List all events for a calendar.</p>
+<h2 id="usage-1"><a class="header" href="#usage-1">Usage</a></h2>
 <pre><code class="language-bash">rscalendar list [OPTIONS]
 </code></pre>
 <h2 id="options"><a class="header" href="#options">Options</a></h2>
@@ -319,27 +368,21 @@ cargo build --release
 <tr><th>Option</th><th>Default</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>--calendar-id &lt;ID&gt;</code></td><td><code>primary</code></td><td>Calendar ID to query</td></tr>
-<tr><td><code>--max-results &lt;N&gt;</code></td><td><code>10</code></td><td>Number of events to return</td></tr>
-<tr><td><code>--time-min &lt;RFC3339&gt;</code></td><td>now</td><td>Lower bound for event start times</td></tr>
-<tr><td><code>--show-deleted</code></td><td><code>false</code></td><td>Include deleted events</td></tr>
+<tr><td><code>--calendar-name &lt;NAME&gt;</code></td><td>from config</td><td>Calendar name to query</td></tr>
 </tbody>
 </table>
 </div>
 <h2 id="examples"><a class="header" href="#examples">Examples</a></h2>
-<p>List next 10 events:</p>
+<p>List all events from the default calendar:</p>
 <pre><code class="language-bash">rscalendar list
 </code></pre>
-<p>List next 50 events:</p>
-<pre><code class="language-bash">rscalendar list --max-results 50
-</code></pre>
-<p>List events starting from a specific date:</p>
-<pre><code class="language-bash">rscalendar list --time-min "2026-04-01T00:00:00Z"
+<p>List all events from a specific calendar:</p>
+<pre><code class="language-bash">rscalendar list --calendar-name Teaching
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="create"><a class="header" href="#create">create</a></h1>
 <p>Create a new calendar event.</p>
-<h2 id="usage-1"><a class="header" href="#usage-1">Usage</a></h2>
+<h2 id="usage-2"><a class="header" href="#usage-2">Usage</a></h2>
 <pre><code class="language-bash">rscalendar create --summary &lt;TEXT&gt; --start &lt;TIME&gt; --end &lt;TIME&gt; [OPTIONS]
 </code></pre>
 <h2 id="options-1"><a class="header" href="#options-1">Options</a></h2>
@@ -373,7 +416,7 @@ cargo build --release
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="update"><a class="header" href="#update">update</a></h1>
 <p>Update fields on an existing calendar event. Only the fields you specify are changed; all others remain unchanged.</p>
-<h2 id="usage-2"><a class="header" href="#usage-2">Usage</a></h2>
+<h2 id="usage-3"><a class="header" href="#usage-3">Usage</a></h2>
 <pre><code class="language-bash">rscalendar update --event-id &lt;ID&gt; [OPTIONS]
 </code></pre>
 <h2 id="options-2"><a class="header" href="#options-2">Options</a></h2>
@@ -404,7 +447,7 @@ cargo build --release
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="delete"><a class="header" href="#delete">delete</a></h1>
 <p>Delete a calendar event by ID.</p>
-<h2 id="usage-3"><a class="header" href="#usage-3">Usage</a></h2>
+<h2 id="usage-4"><a class="header" href="#usage-4">Usage</a></h2>
 <pre><code class="language-bash">rscalendar delete --event-id &lt;ID&gt; [OPTIONS]
 </code></pre>
 <h2 id="options-3"><a class="header" href="#options-3">Options</a></h2>
@@ -424,12 +467,186 @@ cargo build --release
 </code></pre>
 <p>The event ID can be found in the output of <code>rscalendar list</code>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
-<h1 id="auth"><a class="header" href="#auth">auth</a></h1>
-<p>Authenticate with Google via OAuth2 and cache the token locally.</p>
-<h2 id="usage-4"><a class="header" href="#usage-4">Usage</a></h2>
-<pre><code class="language-bash">rscalendar auth [OPTIONS]
+<h1 id="calendar-create"><a class="header" href="#calendar-create">calendar create</a></h1>
+<p>Create a new public Google Calendar.</p>
+<h2 id="usage-5"><a class="header" href="#usage-5">Usage</a></h2>
+<pre><code class="language-bash">rscalendar calendar create &lt;NAME&gt;
+</code></pre>
+<h2 id="details"><a class="header" href="#details">Details</a></h2>
+<p>Creates a new calendar with the given name and sets it to public (readable by anyone). The calendar ID is printed on success — use it with <code>--calendar-id</code> or in <code>config.toml</code>.</p>
+<h2 id="examples-4"><a class="header" href="#examples-4">Examples</a></h2>
+<pre><code class="language-bash">$ rscalendar calendar create Teaching
+Created public calendar 'Teaching'
+  id: abc123@group.calendar.google.com
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="properties-add"><a class="header" href="#properties-add">properties add</a></h1>
+<p>Add shared extended properties to events. Validates keys and values against the <code>[properties]</code> section in <code>config.toml</code>.</p>
+<h2 id="usage-6"><a class="header" href="#usage-6">Usage</a></h2>
+<pre><code class="language-bash">rscalendar properties add [OPTIONS]
 </code></pre>
 <h2 id="options-4"><a class="header" href="#options-4">Options</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Option</th><th>Required</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--calendar-name &lt;NAME&gt;</code></td><td>No</td><td>Calendar name (default: from config)</td></tr>
+<tr><td><code>--key &lt;KEY&gt;</code></td><td>No</td><td>Property key to set (must be in config). If omitted, prompts for all missing properties</td></tr>
+<tr><td><code>--value &lt;VALUE&gt;</code></td><td>No</td><td>Property value (must be allowed for the key). Requires <code>--key</code></td></tr>
+<tr><td><code>--all</code></td><td>No</td><td>Apply to all events without prompting</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="modes"><a class="header" href="#modes">Modes</a></h2>
+<h3 id="interactive-no-keyvalue"><a class="header" href="#interactive-no-keyvalue">Interactive (no –key/–value)</a></h3>
+<p>Walks each event and prompts for all missing properties using a numbered menu of allowed values from config:</p>
+<pre><code class="language-bash">rscalendar properties add
+</code></pre>
+<h3 id="single-property-key-and-value"><a class="header" href="#single-property-key-and-value">Single property (–key and –value)</a></h3>
+<p>Sets a specific property, prompting per event (y/n/q):</p>
+<pre><code class="language-bash">rscalendar properties add --key company --value AgileSparks
+</code></pre>
+<p>Skip prompting with <code>--all</code>:</p>
+<pre><code class="language-bash">rscalendar properties add --key company --value AgileSparks --all
+</code></pre>
+<h2 id="config"><a class="header" href="#config">Config</a></h2>
+<p>Properties must be defined in <code>~/.config/rscalendar/config.toml</code>:</p>
+<pre><code class="language-toml">[properties]
+company = ["AgileSparks", "Intel", "Google"]
+course = ["Linux Fundamentals", "Advanced Python"]
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="properties-check"><a class="header" href="#properties-check">properties check</a></h1>
+<p>Check that all event properties have keys and values defined in the <code>[properties]</code> section of <code>config.toml</code>.</p>
+<h2 id="usage-7"><a class="header" href="#usage-7">Usage</a></h2>
+<pre><code class="language-bash">rscalendar properties check [OPTIONS]
+</code></pre>
+<h2 id="options-5"><a class="header" href="#options-5">Options</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Option</th><th>Required</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--calendar-name &lt;NAME&gt;</code></td><td>No</td><td>Calendar name (default: from config)</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="what-it-checks"><a class="header" href="#what-it-checks">What It Checks</a></h2>
+<ul>
+<li><strong>Missing properties</strong> — keys defined in config but not present on the event</li>
+<li><strong>Invalid values</strong> — property values not in the allowed list for that key</li>
+<li><strong>Unknown properties</strong> — keys on the event that are not defined in config</li>
+</ul>
+<h2 id="example-1"><a class="header" href="#example-1">Example</a></h2>
+<pre><code class="language-bash">$ rscalendar properties check
+Team Meeting (2026-04-01T10:00:00+03:00):
+  - missing property 'course'
+Workshop (2026-04-02T09:00:00+03:00):
+  - property 'company' has value 'Foo' which is not in allowed values: AgileSparks, Intel, Google
+
+2 issue(s) found across 5 event(s).
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="properties-delete"><a class="header" href="#properties-delete">properties delete</a></h1>
+<p>Delete a shared extended property from events.</p>
+<h2 id="usage-8"><a class="header" href="#usage-8">Usage</a></h2>
+<pre><code class="language-bash">rscalendar properties delete --key &lt;KEY&gt; [OPTIONS]
+</code></pre>
+<h2 id="options-6"><a class="header" href="#options-6">Options</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Option</th><th>Required</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--key &lt;KEY&gt;</code></td><td>Yes</td><td>Property key to delete</td></tr>
+<tr><td><code>--calendar-name &lt;NAME&gt;</code></td><td>No</td><td>Calendar name (default: from config)</td></tr>
+<tr><td><code>--all</code></td><td>No</td><td>Apply to all events without prompting</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="details-1"><a class="header" href="#details-1">Details</a></h2>
+<p>Interactive by default — prompts (y/n/q) for each event that has the property. Events that don’t have the property are skipped automatically.</p>
+<p>The deletion works by sending the property key with a <code>null</code> value to the Google Calendar API, which is the only way to remove an extended property.</p>
+<h2 id="examples-5"><a class="header" href="#examples-5">Examples</a></h2>
+<p>Delete interactively:</p>
+<pre><code class="language-bash">rscalendar properties delete --key client
+</code></pre>
+<p>Delete from all events without prompting:</p>
+<pre><code class="language-bash">rscalendar properties delete --key client --all
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="properties-rename"><a class="header" href="#properties-rename">properties rename</a></h1>
+<p>Rename a shared extended property key on events. The value is preserved.</p>
+<h2 id="usage-9"><a class="header" href="#usage-9">Usage</a></h2>
+<pre><code class="language-bash">rscalendar properties rename --from &lt;OLD_KEY&gt; --to &lt;NEW_KEY&gt; [OPTIONS]
+</code></pre>
+<h2 id="options-7"><a class="header" href="#options-7">Options</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Option</th><th>Required</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--from &lt;OLD_KEY&gt;</code></td><td>Yes</td><td>Current property key name</td></tr>
+<tr><td><code>--to &lt;NEW_KEY&gt;</code></td><td>Yes</td><td>New property key name</td></tr>
+<tr><td><code>--calendar-name &lt;NAME&gt;</code></td><td>No</td><td>Calendar name (default: from config)</td></tr>
+<tr><td><code>--all</code></td><td>No</td><td>Apply to all events without prompting</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="details-2"><a class="header" href="#details-2">Details</a></h2>
+<p>Interactive by default — prompts (y/n/q) for each event that has the old key. Events without the old key are skipped.</p>
+<p>The rename removes the old key and adds the new key with the same value in a single PATCH request.</p>
+<h2 id="examples-6"><a class="header" href="#examples-6">Examples</a></h2>
+<p>Rename interactively:</p>
+<pre><code class="language-bash">rscalendar properties rename --from source_calendar --to client
+</code></pre>
+<p>Rename on all events without prompting:</p>
+<pre><code class="language-bash">rscalendar properties rename --from source_calendar --to client --all
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="move-events"><a class="header" href="#move-events">move-events</a></h1>
+<p>Move events from one calendar to another, optionally tagging each event with a shared extended property. Events are created in the target calendar and deleted from the source.</p>
+<h2 id="usage-10"><a class="header" href="#usage-10">Usage</a></h2>
+<pre><code class="language-bash">rscalendar move-events --source &lt;NAME&gt; --target &lt;NAME&gt; [OPTIONS]
+</code></pre>
+<h2 id="options-8"><a class="header" href="#options-8">Options</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Option</th><th>Required</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--source &lt;NAME&gt;</code></td><td>Yes</td><td>Source calendar name to move events from</td></tr>
+<tr><td><code>--target &lt;NAME&gt;</code></td><td>Yes</td><td>Target calendar name to move events into</td></tr>
+<tr><td><code>--property-key &lt;KEY&gt;</code></td><td>No</td><td>Shared extended property key to set on moved events</td></tr>
+<tr><td><code>--property-value &lt;VALUE&gt;</code></td><td>No</td><td>Shared extended property value (requires <code>--property-key</code>)</td></tr>
+<tr><td><code>--interactive</code></td><td>No</td><td>Prompt for each event: y=move, n=skip, q=quit</td></tr>
+<tr><td><code>--dry-run</code></td><td>No</td><td>Show what would be done without making changes</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="examples-7"><a class="header" href="#examples-7">Examples</a></h2>
+<p>Preview what would be moved:</p>
+<pre><code class="language-bash">rscalendar move-events --source "Client - John" --target Teaching --dry-run
+</code></pre>
+<p>Interactively move events, choosing which ones to move:</p>
+<pre><code class="language-bash">rscalendar move-events --source "Client - John" --target Teaching --interactive --property-key client --property-value John
+</code></pre>
+<p>Move all events without prompting:</p>
+<pre><code class="language-bash">rscalendar move-events --source "Client - John" --target Teaching --property-key client --property-value John
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="auth"><a class="header" href="#auth">auth</a></h1>
+<p>Authenticate with Google via OAuth2 and cache the token locally.</p>
+<h2 id="usage-11"><a class="header" href="#usage-11">Usage</a></h2>
+<pre><code class="language-bash">rscalendar auth [OPTIONS]
+</code></pre>
+<h2 id="options-9"><a class="header" href="#options-9">Options</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
@@ -441,7 +658,7 @@ cargo build --release
 </tbody>
 </table>
 </div>
-<h2 id="examples-4"><a class="header" href="#examples-4">Examples</a></h2>
+<h2 id="examples-8"><a class="header" href="#examples-8">Examples</a></h2>
 <p>Normal authentication (opens browser):</p>
 <pre><code class="language-bash">rscalendar auth
 </code></pre>
@@ -452,9 +669,19 @@ cargo build --release
 <pre><code class="language-bash">rscalendar auth --force
 </code></pre>
 <div style="break-before: page; page-break-before: always;"></div>
+<h1 id="defconfig"><a class="header" href="#defconfig">defconfig</a></h1>
+<p>Print the default configuration file to stdout.</p>
+<h2 id="usage-12"><a class="header" href="#usage-12">Usage</a></h2>
+<pre><code class="language-bash">rscalendar defconfig
+</code></pre>
+<h2 id="example-2"><a class="header" href="#example-2">Example</a></h2>
+<p>To create a fresh config file with all defaults commented out:</p>
+<pre><code class="language-bash">rscalendar defconfig &gt; ~/.config/rscalendar/config.toml
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div>
 <h1 id="complete"><a class="header" href="#complete">complete</a></h1>
 <p>Generate shell completion scripts.</p>
-<h2 id="usage-5"><a class="header" href="#usage-5">Usage</a></h2>
+<h2 id="usage-13"><a class="header" href="#usage-13">Usage</a></h2>
 <pre><code class="language-bash">rscalendar complete &lt;SHELL&gt;
 </code></pre>
 <h2 id="supported-shells"><a class="header" href="#supported-shells">Supported Shells</a></h2>
@@ -465,7 +692,7 @@ cargo build --release
 <li><code>elvish</code></li>
 <li><code>powershell</code></li>
 </ul>
-<h2 id="examples-5"><a class="header" href="#examples-5">Examples</a></h2>
+<h2 id="examples-9"><a class="header" href="#examples-9">Examples</a></h2>
 <p>Generate and install bash completions:</p>
 <pre><code class="language-bash">rscalendar complete bash &gt; ~/.local/share/bash-completion/completions/rscalendar
 </code></pre>
@@ -479,36 +706,32 @@ cargo build --release
 <pre><code>~/.config/rscalendar/config.toml
 </code></pre>
 <p>The config file is optional. If missing, built-in defaults are used. All config values can be overridden by CLI flags.</p>
-<h2 id="options-5"><a class="header" href="#options-5">Options</a></h2>
+<h2 id="options-10"><a class="header" href="#options-10">Options</a></h2>
 <div class="table-wrapper">
 <table>
 <thead>
 <tr><th>Key</th><th>Type</th><th>Default</th><th>Description</th></tr>
 </thead>
 <tbody>
-<tr><td><code>calendar_id</code></td><td>string</td><td><code>"primary"</code></td><td>Default calendar ID for all commands</td></tr>
-<tr><td><code>max_results</code></td><td>integer</td><td><code>10</code></td><td>Default number of events for <code>list</code></td></tr>
+<tr><td><code>calendar_name</code></td><td>string</td><td>(none)</td><td>Default calendar name for all commands</td></tr>
 <tr><td><code>no_browser</code></td><td>boolean</td><td><code>false</code></td><td>Don’t open browser during <code>auth</code></td></tr>
 </tbody>
 </table>
 </div>
-<h2 id="example"><a class="header" href="#example">Example</a></h2>
+<h2 id="example-3"><a class="header" href="#example-3">Example</a></h2>
 <pre><code class="language-toml"># Use a specific calendar by default
-calendar_id = "work@group.calendar.google.com"
-
-# Show more events by default
-max_results = 25
+calendar_name = "Teaching"
 
 # Always print URL instead of opening browser (headless machines)
 no_browser = true
 </code></pre>
 <h2 id="precedence"><a class="header" href="#precedence">Precedence</a></h2>
 <p>CLI flags always win over config file values:</p>
-<pre><code class="language-bash"># Uses calendar_id from config.toml
+<pre><code class="language-bash"># Uses calendar_name from config.toml
 rscalendar list
 
 # Overrides config.toml with the flag value
-rscalendar list --calendar-id "other@group.calendar.google.com"
+rscalendar list --calendar-name "Work"
 </code></pre>
 <h2 id="files-overview"><a class="header" href="#files-overview">Files Overview</a></h2>
 <div class="table-wrapper">
@@ -523,6 +746,49 @@ rscalendar list --calendar-id "other@group.calendar.google.com"
 </tbody>
 </table>
 </div>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="design-decisions"><a class="header" href="#design-decisions">Design Decisions</a></h1>
+<h2 id="event-tags-via-shared-extended-properties"><a class="header" href="#event-tags-via-shared-extended-properties">Event Tags via Shared Extended Properties</a></h2>
+<p>Google Calendar API offers <code>extendedProperties</code> on events for storing custom key-value metadata. There are two scopes:</p>
+<ul>
+<li><strong><code>private</code></strong> — scoped to the OAuth client ID that created them. Only the same client ID can read them back.</li>
+<li><strong><code>shared</code></strong> — visible to anyone with access to the event (all attendees, all apps, including public calendar readers via the API).</li>
+</ul>
+<h3 id="why-shared"><a class="header" href="#why-shared">Why <code>shared</code>?</a></h3>
+<p>We chose <code>shared</code> extended properties for the following reasons:</p>
+<ol>
+<li>
+<p><strong>Data durability</strong> — <code>private</code> properties are tied to the OAuth client ID in <code>credentials.json</code>. If you ever recreate your OAuth credentials in Google Cloud Console (new project, deleted and re-created client ID, etc.), all <code>private</code> extended properties become permanently inaccessible. The data isn’t deleted, but there is no way to recover it with a different client ID. With <code>shared</code>, the data belongs to the event itself and survives credential changes.</p>
+</li>
+<li>
+<p><strong>Acceptable visibility tradeoff</strong> — <code>shared</code> properties are visible via the API to anyone who can read the event. On public calendars, this means anyone querying the API could see the tags. However, extended properties are <strong>not</strong> displayed in the Google Calendar web or mobile UI — they are only accessible programmatically. For a personal CLI tool, this is an acceptable tradeoff.</p>
+</li>
+<li>
+<p><strong>Interoperability</strong> — <code>shared</code> properties can be read and written by any tool or script with access to the calendar, not just rscalendar. This makes it possible to build other tools that interact with the same tags.</p>
+</li>
+</ol>
+<h3 id="implementation-plan"><a class="header" href="#implementation-plan">Implementation Plan</a></h3>
+<p>Tags will be stored as a comma-separated string under a single key in <code>shared</code> extended properties:</p>
+<pre><code class="language-json">{
+  "extendedProperties": {
+    "shared": {
+      "tags": "work,urgent,followup"
+    }
+  }
+}
+</code></pre>
+<p>The Google Calendar API supports filtering events by extended properties using the <code>sharedExtendedProperty</code> query parameter, enabling efficient tag-based queries without client-side filtering.</p>
+<h2 id="deleting-extended-properties"><a class="header" href="#deleting-extended-properties">Deleting Extended Properties</a></h2>
+<p>Google Calendar API does not remove an extended property when you simply omit it from a PATCH request. To delete a property, you must explicitly set its value to <code>null</code>:</p>
+<pre><code class="language-json">{
+  "extendedProperties": {
+    "shared": {
+      "key_to_delete": null
+    }
+  }
+}
+</code></pre>
+<p>This is handled automatically by <code>rscalendar properties delete</code>.</p>
 
                     </main>
 

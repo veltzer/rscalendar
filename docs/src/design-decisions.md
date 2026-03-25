@@ -32,3 +32,19 @@ Tags will be stored as a comma-separated string under a single key in `shared` e
 ```
 
 The Google Calendar API supports filtering events by extended properties using the `sharedExtendedProperty` query parameter, enabling efficient tag-based queries without client-side filtering.
+
+## Deleting Extended Properties
+
+Google Calendar API does not remove an extended property when you simply omit it from a PATCH request. To delete a property, you must explicitly set its value to `null`:
+
+```json
+{
+  "extendedProperties": {
+    "shared": {
+      "key_to_delete": null
+    }
+  }
+}
+```
+
+This is handled automatically by `rscalendar properties delete`.
