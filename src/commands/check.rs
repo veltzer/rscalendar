@@ -39,14 +39,14 @@ pub async fn cmd_check(client: &GoogleCalendarClient, args: &CheckArgs, config: 
             Some(t) => t.clone(),
             None => {
                 println!("{summary} ({start}):");
-                println!("  - missing 'type' property");
+                println!("- missing 'type' property");
                 issues += 1;
                 events_with_issues += 1;
 
                 if args.fix {
                     if let (Some(props), Some(eid)) = (&properties, event_id) {
                         if let Some(type_values) = props.get("type") {
-                            let prompt = format!("  Fix: select type for '{summary}':");
+                            let prompt = format!("Fix: select type for '{summary}':");
                             if let Some(chosen_type) = prompt_select(&prompt, type_values)? {
                                 let mut new_props = event.shared_properties();
                                 new_props.insert("type".to_string(), chosen_type.clone());
@@ -56,7 +56,7 @@ pub async fn cmd_check(client: &GoogleCalendarClient, args: &CheckArgs, config: 
                                     for key in required {
                                         if !new_props.contains_key(key) {
                                             if let Some(key_values) = props.get(key) {
-                                                let key_prompt = format!("  Fix: select {key}:");
+                                                let key_prompt = format!("Fix: select {key}:");
                                                 if let Some(value) = prompt_select(&key_prompt, key_values)? {
                                                     new_props.insert(key.clone(), value);
                                                 }
@@ -66,7 +66,7 @@ pub async fn cmd_check(client: &GoogleCalendarClient, args: &CheckArgs, config: 
                                 }
 
                                 client.patch_event_properties(&calendar_id, eid, &new_props).await?;
-                                println!("  fixed.");
+                                println!("fixed.");
                                 fixed += 1;
                             }
                         }
@@ -80,7 +80,7 @@ pub async fn cmd_check(client: &GoogleCalendarClient, args: &CheckArgs, config: 
             Some(r) => r,
             None => {
                 println!("{summary} ({start}):");
-                println!("  - unknown type '{event_type}' (not in [check] config)");
+                println!("- unknown type '{event_type}' (not in [check] config)");
                 issues += 1;
                 events_with_issues += 1;
                 continue;
@@ -97,27 +97,27 @@ pub async fn cmd_check(client: &GoogleCalendarClient, args: &CheckArgs, config: 
         if !missing_keys.is_empty() {
             println!("{summary} ({start}):");
             for key in &missing_keys {
-                println!("  - missing required property '{key}' (required for type '{event_type}')");
+                println!("- missing required property '{key}' (required for type '{event_type}')");
             }
             issues += missing_keys.len() as u32;
             events_with_issues += 1;
 
             if args.fix {
                 if let (Some(props), Some(eid)) = (&properties, event_id) {
-                    let prompt = format!("  Fix this event?");
+                    let prompt = format!("Fix this event?");
                     match prompt_yes_no_quit(&prompt)? {
                         Some(true) => {
                             let mut new_props = event.shared_properties();
                             for key in &missing_keys {
                                 if let Some(key_values) = props.get(*key) {
-                                    let key_prompt = format!("  Select {key}:");
+                                    let key_prompt = format!("Select {key}:");
                                     if let Some(value) = prompt_select(&key_prompt, key_values)? {
                                         new_props.insert((*key).clone(), value);
                                     }
                                 }
                             }
                             client.patch_event_properties(&calendar_id, eid, &new_props).await?;
-                            println!("  fixed.");
+                            println!("fixed.");
                             fixed += 1;
                         }
                         Some(false) => {}

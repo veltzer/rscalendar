@@ -133,32 +133,32 @@ pub fn print_event(event: &CalendarEvent, show_builtin: bool, json_output: bool)
     let bi = if show_builtin { " (built-in)" } else { "" };
 
     println!("{summary}");
-    println!("  id: {id}{bi}");
-    println!("  start: {start}{bi}");
-    println!("  end: {end}{bi}");
+    println!("id: {id}{bi}");
+    println!("start: {start}{bi}");
+    println!("end: {end}{bi}");
 
     if let Some(status) = &event.status {
-        println!("  status: {status}{bi}");
+        println!("status: {status}{bi}");
     }
 
     if let Some(location) = &event.location {
-        println!("  location: {location}{bi}");
+        println!("location: {location}{bi}");
     }
 
     if let Some(description) = &event.description {
-        println!("  description: {description}{bi}");
+        println!("description: {description}{bi}");
     }
 
     if let Some(html_link) = &event.html_link {
-        println!("  link: {html_link}{bi}");
+        println!("link: {html_link}{bi}");
     }
 
     if let Some(props) = &event.extended_properties {
         if let Some(shared) = &props.shared {
             if !shared.is_empty() {
-                println!("  ---");
+                println!("---");
                 for (key, value) in shared {
-                    println!("  {key}: {value}");
+                    println!("{key}: {value}");
                 }
             }
         }
@@ -193,12 +193,12 @@ pub fn print_calendar(cal: &CalendarListEntry, json_output: bool) {
     let summary = cal.summary.as_deref().unwrap_or("<untitled>");
     let primary = if cal.primary.unwrap_or(false) { " (primary)" } else { "" };
     println!("{summary}{primary}");
-    println!("  id: {id}");
+    println!("id: {id}");
     if let Some(role) = &cal.access_role {
-        println!("  role: {role}");
+        println!("role: {role}");
     }
     if let Some(desc) = &cal.description {
-        println!("  description: {desc}");
+        println!("description: {desc}");
     }
     println!();
 }

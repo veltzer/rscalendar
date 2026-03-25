@@ -212,17 +212,17 @@ pub async fn cmd_stats(client: &GoogleCalendarClient, args: &CalendarNameArgs, c
 
     println!("\nEvents by type:");
     for (k, v) in &by_type {
-        println!("  {k}: {v}");
+        println!("{k}: {v}");
     }
 
     println!("\nEvents by client:");
     for (k, v) in &by_client {
-        println!("  {k}: {v}");
+        println!("{k}: {v}");
     }
 
     println!("\nEvents by month:");
     for (k, v) in &by_month {
-        println!("  {k}: {v}");
+        println!("{k}: {v}");
     }
 
     Ok(())

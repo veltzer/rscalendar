@@ -21,7 +21,7 @@ pub async fn cmd_move_events(client: &GoogleCalendarClient, args: &MoveEventsArg
     if !out.quiet { println!("Moving events from '{}' to '{}'", args.source, args.target); }
     if !out.quiet {
         if !args.all {
-            println!("  interactive mode: y=move, n=skip, q=quit");
+            println!("interactive mode: y=move, n=skip, q=quit");
         }
         println!();
     }
@@ -42,14 +42,14 @@ pub async fn cmd_move_events(client: &GoogleCalendarClient, args: &MoveEventsArg
         let event_id = match &event.id {
             Some(id) => id,
             None => {
-                eprintln!("  skipping event with no id: {summary}");
+                eprintln!("skipping event with no id: {summary}");
                 skipped += 1;
                 continue;
             }
         };
 
         if !args.all {
-            let prompt = format!("  Move '{summary}' ({start})?");
+            let prompt = format!("Move '{summary}' ({start})?");
             match prompt_yes_no_quit(&prompt)? {
                 Some(true) => {}
                 Some(false) => { skipped += 1; continue; }
@@ -61,7 +61,7 @@ pub async fn cmd_move_events(client: &GoogleCalendarClient, args: &MoveEventsArg
         }
 
         if args.dry_run {
-            if !out.quiet { println!("  [dry-run] would move: {summary} ({start})"); }
+            if !out.quiet { println!("[dry-run] would move: {summary} ({start})"); }
             moved += 1;
         } else {
             let mut payload = json!({ "summary": summary });
@@ -83,7 +83,7 @@ pub async fn cmd_move_events(client: &GoogleCalendarClient, args: &MoveEventsArg
 
             client.insert_event_raw(&target_id, &payload).await?;
             client.delete_event(&source_id, event_id).await?;
-            if !out.quiet { println!("  moved: {summary} ({start})"); }
+            if !out.quiet { println!("moved: {summary} ({start})"); }
             moved += 1;
         }
     }

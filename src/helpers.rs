@@ -76,10 +76,10 @@ pub fn prompt_select(prompt: &str, options: &[String]) -> Result<Option<String>>
     use std::io::{BufRead, Write};
     eprintln!("{prompt}");
     for (i, opt) in options.iter().enumerate() {
-        eprintln!("  {}: {opt}", i + 1);
+        eprintln!("{}: {opt}", i + 1);
     }
-    eprintln!("  s: skip this property");
-    eprint!("  choice: ");
+    eprintln!("s: skip this property");
+    eprint!("choice: ");
     std::io::stderr().flush()?;
     let mut line = String::new();
     std::io::stdin().lock().read_line(&mut line)?;
@@ -92,7 +92,7 @@ pub fn prompt_select(prompt: &str, options: &[String]) -> Result<Option<String>>
             return Ok(Some(options[n - 1].clone()));
         }
     }
-    eprintln!("  invalid choice, skipping");
+    eprintln!("invalid choice, skipping");
     Ok(None)
 }
 
@@ -107,7 +107,7 @@ pub fn prompt_yes_no_quit(message: &str) -> Result<Option<bool>> {
             "y" | "yes" => return Ok(Some(true)),
             "n" | "no" => return Ok(Some(false)),
             "q" | "quit" => return Ok(None),
-            _ => eprintln!("  Please enter y, n, or q"),
+            _ => eprintln!("Please enter y, n, or q"),
         }
     }
 }

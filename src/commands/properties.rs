@@ -73,13 +73,13 @@ pub async fn cmd_properties_add(client: &GoogleCalendarClient, args: &Properties
             let mut new_props = existing;
             new_props.insert(key.clone(), value.clone());
             client.patch_event_properties(&calendar_id, event_id, &new_props).await?;
-            if !out.quiet { println!("  set on: {summary} ({start})"); }
+            if !out.quiet { println!("set on: {summary} ({start})"); }
             updated += 1;
         } else {
             eprintln!("Event: {summary} ({start})");
             if !existing.is_empty() {
                 for (k, v) in &existing {
-                    eprintln!("  existing {k}: {v}");
+                    eprintln!("existing {k}: {v}");
                 }
             }
 
@@ -91,7 +91,7 @@ pub async fn cmd_properties_add(client: &GoogleCalendarClient, args: &Properties
                 if existing.contains_key(*key) {
                     continue;
                 }
-                let prompt = format!("  Select {key}:");
+                let prompt = format!("Select {key}:");
                 if let Some(value) = prompt_select(&prompt, values)? {
                     new_props.insert((*key).clone(), value);
                     changed = true;
@@ -100,10 +100,10 @@ pub async fn cmd_properties_add(client: &GoogleCalendarClient, args: &Properties
 
             if changed {
                 client.patch_event_properties(&calendar_id, event_id, &new_props).await?;
-                eprintln!("  updated\n");
+                eprintln!("updated\n");
                 updated += 1;
             } else {
-                eprintln!("  no changes\n");
+                eprintln!("no changes\n");
                 skipped += 1;
             }
         }
@@ -164,7 +164,7 @@ pub async fn cmd_properties_check(client: &GoogleCalendarClient, args: &Calendar
         if !event_issues.is_empty() {
             println!("{summary} ({start}):");
             for issue in &event_issues {
-                println!("  - {issue}");
+                println!("- {issue}");
             }
             issues += event_issues.len() as u32;
         }
@@ -219,7 +219,7 @@ pub async fn cmd_properties_delete(client: &GoogleCalendarClient, args: &Propert
         }
 
         client.delete_property(&calendar_id, event_id, &args.key).await?;
-        if !out.quiet { println!("  deleted from: {summary} ({start})"); }
+        if !out.quiet { println!("deleted from: {summary} ({start})"); }
         updated += 1;
     }
 
@@ -272,7 +272,7 @@ pub async fn cmd_properties_rename(client: &GoogleCalendarClient, args: &Propert
 
         existing.insert(args.to.clone(), value);
         client.patch_event_properties(&calendar_id, event_id, &existing).await?;
-        if !out.quiet { println!("  renamed on: {summary} ({start})"); }
+        if !out.quiet { println!("renamed on: {summary} ({start})"); }
         updated += 1;
     }
 
@@ -321,25 +321,25 @@ pub async fn cmd_properties_edit(client: &GoogleCalendarClient, args: &CalendarN
         loop {
             eprintln!();
             eprintln!("{summary}");
-            eprintln!("  start: {start}");
-            eprintln!("  end:   {end}");
+            eprintln!("start: {start}");
+            eprintln!("end:   {end}");
             if let Some(location) = &event.location {
-                eprintln!("  location: {location}");
+                eprintln!("location: {location}");
             }
             if let Some(description) = &event.description {
-                eprintln!("  description: {description}");
+                eprintln!("description: {description}");
             }
             if current.is_empty() && deleted_keys.is_empty() {
-                eprintln!("  (no properties)");
+                eprintln!("(no properties)");
             } else {
                 for key in &sorted_keys {
                     if let Some(val) = current.get(*key) {
-                        eprintln!("  {key}: {val}");
+                        eprintln!("{key}: {val}");
                     }
                 }
                 for (k, v) in &current {
                     if !properties.contains_key(k) {
-                        eprintln!("  {k}: {v} (unknown)");
+                        eprintln!("{k}: {v} (unknown)");
                     }
                 }
             }
@@ -361,18 +361,18 @@ pub async fn cmd_properties_edit(client: &GoogleCalendarClient, args: &CalendarN
                 }
             }
 
-            eprintln!("  Actions:");
+            eprintln!("Actions:");
             for (i, entry) in menu_entries.iter().enumerate() {
                 let actions_str: Vec<String> = entry.actions.iter()
                     .map(|(code, label)| format!("{code}={label}"))
                     .collect();
-                eprintln!("    {}: '{}' [{}]", i + 1, entry.key, actions_str.join(", "));
+                eprintln!("{}: '{}' [{}]", i + 1, entry.key, actions_str.join(", "));
             }
-            eprintln!("    n: next event");
-            eprintln!("    q: quit");
+            eprintln!("n: next event");
+            eprintln!("q: quit");
 
             use std::io::{BufRead, Write};
-            eprint!("  choice: ");
+            eprint!("choice: ");
             std::io::stderr().flush()?;
             let mut line = String::new();
             std::io::stdin().lock().read_line(&mut line)?;
@@ -385,7 +385,7 @@ pub async fn cmd_properties_edit(client: &GoogleCalendarClient, args: &CalendarN
                 if changed {
                     client.patch_event_properties_with_deletes(&calendar_id, event_id, &current, &deleted_keys).await?;
                     updated += 1;
-                    eprintln!("  saved.");
+                    eprintln!("saved.");
                 }
                 if !out.quiet { println!("\nQuit. {updated} event(s) updated."); }
                 return Ok(());
@@ -399,7 +399,7 @@ pub async fn cmd_properties_edit(client: &GoogleCalendarClient, args: &CalendarN
 
             let idx = match num_str.parse::<usize>() {
                 Ok(n) if n >= 1 && n <= menu_entries.len() => n - 1,
-                _ => { eprintln!("  invalid choice"); continue; }
+                _ => { eprintln!("invalid choice"); continue; }
             };
 
             let entry = &menu_entries[idx];
@@ -409,11 +409,11 @@ pub async fn cmd_properties_edit(client: &GoogleCalendarClient, args: &CalendarN
                 if let Some((a, _)) = entry.actions.iter().find(|(c, _)| *c == code) {
                     a
                 } else {
-                    eprintln!("  invalid action. Use: {}", entry.actions.iter().map(|(c, l)| format!("{c}={l}")).collect::<Vec<_>>().join(", "));
+                    eprintln!("invalid action. Use: {}", entry.actions.iter().map(|(c, l)| format!("{c}={l}")).collect::<Vec<_>>().join(", "));
                     continue;
                 }
             } else {
-                eprintln!("  specify action: {}", entry.actions.iter().map(|(c, l)| format!("{c}={l}")).collect::<Vec<_>>().join(", "));
+                eprintln!("specify action: {}", entry.actions.iter().map(|(c, l)| format!("{c}={l}")).collect::<Vec<_>>().join(", "));
                 continue;
             };
 
@@ -421,7 +421,7 @@ pub async fn cmd_properties_edit(client: &GoogleCalendarClient, args: &CalendarN
             match action {
                 "a" | "c" => {
                     let values = &properties[key];
-                    let prompt = format!("  Select value for '{key}':");
+                    let prompt = format!("Select value for '{key}':");
                     if let Some(value) = prompt_select(&prompt, values)? {
                         current.insert(key.clone(), value);
                         changed = true;
@@ -431,7 +431,7 @@ pub async fn cmd_properties_edit(client: &GoogleCalendarClient, args: &CalendarN
                     current.remove(key);
                     deleted_keys.push(key.clone());
                     changed = true;
-                    eprintln!("  deleted '{key}'");
+                    eprintln!("deleted '{key}'");
                 }
                 _ => unreachable!(),
             }
@@ -439,7 +439,7 @@ pub async fn cmd_properties_edit(client: &GoogleCalendarClient, args: &CalendarN
 
         if changed {
             client.patch_event_properties_with_deletes(&calendar_id, event_id, &current, &deleted_keys).await?;
-            eprintln!("  saved.");
+            eprintln!("saved.");
             updated += 1;
         }
     }
@@ -494,7 +494,7 @@ pub async fn cmd_properties_set_value(client: &GoogleCalendarClient, args: &Prop
         let mut new_props = existing;
         new_props.insert(args.key.clone(), args.to.clone());
         client.patch_event_properties(&calendar_id, event_id, &new_props).await?;
-        if !out.quiet { println!("  changed on: {summary} ({start})"); }
+        if !out.quiet { println!("changed on: {summary} ({start})"); }
         updated += 1;
     }
 

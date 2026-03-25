@@ -12,7 +12,7 @@ pub async fn cmd_calendar_create(client: &GoogleCalendarClient, name: &str, out:
     let id = calendar["id"].as_str().unwrap_or("<unknown>");
     if !out.quiet {
         println!("Created public calendar '{name}'");
-        println!("  id: {id}");
+        println!("id: {id}");
     }
     Ok(())
 }
@@ -55,7 +55,7 @@ pub async fn cmd_calendar_clear(client: &GoogleCalendarClient, args: &CalendarCl
     if !out.quiet {
         println!("Found {} event(s)", events.len());
         if !args.all {
-            println!("  interactive mode: y=delete, n=skip, q=quit");
+            println!("interactive mode: y=delete, n=skip, q=quit");
         }
         println!();
     }
@@ -68,14 +68,14 @@ pub async fn cmd_calendar_clear(client: &GoogleCalendarClient, args: &CalendarCl
         let event_id = match &event.id {
             Some(id) => id,
             None => {
-                eprintln!("  skipping event with no id: {summary}");
+                eprintln!("skipping event with no id: {summary}");
                 skipped += 1;
                 continue;
             }
         };
 
         if !args.all {
-            let prompt = format!("  Delete '{summary}' ({start})?");
+            let prompt = format!("Delete '{summary}' ({start})?");
             match prompt_yes_no_quit(&prompt)? {
                 Some(true) => {}
                 Some(false) => { skipped += 1; continue; }
@@ -87,7 +87,7 @@ pub async fn cmd_calendar_clear(client: &GoogleCalendarClient, args: &CalendarCl
         }
 
         client.delete_event(&calendar_id, event_id).await?;
-        if !out.quiet { println!("  deleted: {summary} ({start})"); }
+        if !out.quiet { println!("deleted: {summary} ({start})"); }
         deleted += 1;
     }
 
@@ -127,13 +127,13 @@ pub async fn cmd_calendar_copy(client: &GoogleCalendarClient, args: &CalendarCop
         let summary = event.summary_or_default();
         let start = event.start_str();
         if event.id.is_none() {
-            eprintln!("  skipping event with no id: {summary}");
+            eprintln!("skipping event with no id: {summary}");
             skipped += 1;
             continue;
         }
 
         if args.dry_run {
-            if !out.quiet { println!("  [dry-run] would copy: {summary} ({start})"); }
+            if !out.quiet { println!("[dry-run] would copy: {summary} ({start})"); }
             copied += 1;
         } else {
             let mut payload = json!({ "summary": summary });
@@ -154,7 +154,7 @@ pub async fn cmd_calendar_copy(client: &GoogleCalendarClient, args: &CalendarCop
             }
 
             client.insert_event_raw(&target_id, &payload).await?;
-            if !out.quiet { println!("  copied: {summary} ({start})"); }
+            if !out.quiet { println!("copied: {summary} ({start})"); }
             copied += 1;
         }
     }
