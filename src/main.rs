@@ -4,9 +4,11 @@ mod config;
 mod helpers;
 mod models;
 
+use std::collections::BTreeMap;
+
 use anyhow::{Context, Result, bail};
 use chrono::NaiveDate;
-use clap::{Args, CommandFactory, Parser, Subcommand};
+use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use serde_json::json;
 
 use client::{GoogleCalendarClient, resolve_calendar_id};
@@ -60,12 +62,18 @@ enum Command {
         action: CalendarAction,
     },
     /// Check that events have all required properties based on their type.
-    Check(CalendarNameArgs),
+    Check(CheckArgs),
     /// Manage event properties.
     Properties {
         #[command(subcommand)]
         action: PropertiesAction,
     },
+    /// Delete all events from a calendar.
+    DeleteAllEvents(DeleteAllEventsArgs),
+    /// Copy all events from one calendar to another.
+    CopyCalendar(CopyCalendarArgs),
+    /// Print statistics about events (counts by type, client, month).
+    Stats(CalendarNameArgs),
     /// Interactively move events from one calendar to another.
     MoveEvents(MoveEventsArgs),
     /// Authenticate with Google via OAuth2 and cache the token.
@@ -84,6 +92,18 @@ enum CalendarAction {
     Create {
         /// Name of the calendar to create.
         name: String,
+    },
+    /// Delete a calendar.
+    Delete {
+        /// Name of the calendar to delete.
+        name: String,
+    },
+    /// Rename a calendar.
+    Rename {
+        /// Current name of the calendar.
+        name: String,
+        /// New name for the calendar.
+        new_name: String,
     },
 }
 
@@ -109,6 +129,8 @@ enum PropertiesAction {
     Rename(PropertiesRenameArgs),
     /// Interactively edit properties on each event via TUI menus.
     Edit(CalendarNameArgs),
+    /// Change a property value on events (from one value to another).
+    SetValue(PropertiesSetValueArgs),
 }
 
 // --- Shared args ---
@@ -118,6 +140,16 @@ struct CalendarNameArgs {
     /// Calendar name (default: from config).
     #[arg(long)]
     calendar_name: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct CheckArgs {
+    /// Calendar name (default: from config).
+    #[arg(long)]
+    calendar_name: Option<String>,
+    /// Interactively fix events that have issues by prompting to set missing properties.
+    #[arg(long, default_value_t = false)]
+    fix: bool,
 }
 
 #[derive(Debug, Args)]
@@ -182,6 +214,56 @@ struct PropertiesRenameArgs {
 }
 
 #[derive(Debug, Args)]
+struct PropertiesSetValueArgs {
+    /// Calendar name (default: from config).
+    #[arg(long)]
+    calendar_name: Option<String>,
+    /// Property key to change.
+    #[arg(long)]
+    key: String,
+    /// Current value to match.
+    #[arg(long)]
+    from: String,
+    /// New value to set.
+    #[arg(long)]
+    to: String,
+    /// Apply to all matching events without prompting.
+    #[arg(long, default_value_t = false)]
+    all: bool,
+}
+
+#[derive(Debug, Args)]
+struct DeleteAllEventsArgs {
+    /// Calendar name (default: from config).
+    #[arg(long)]
+    calendar_name: Option<String>,
+    /// Delete all events without prompting.
+    #[arg(long, default_value_t = false)]
+    all: bool,
+}
+
+#[derive(Debug, Args)]
+struct CopyCalendarArgs {
+    /// Source calendar name to copy events from.
+    #[arg(long)]
+    source: String,
+    /// Target calendar name to copy events into.
+    #[arg(long)]
+    target: String,
+    /// Show what would be done without making changes.
+    #[arg(long, default_value_t = false)]
+    dry_run: bool,
+}
+
+#[derive(Debug, Clone, ValueEnum)]
+enum ListFormat {
+    /// Default human-readable output.
+    Default,
+    /// Aligned table with columns: summary, start, end, type, client.
+    Table,
+}
+
+#[derive(Debug, Args)]
 struct ListArgs {
     /// Calendar name (default: from config).
     #[arg(long)]
@@ -199,6 +281,12 @@ struct ListArgs {
     /// If just KEY is given (no =), filter events that have that key with any value.
     #[arg(long)]
     has_property: Option<String>,
+    /// Only print the number of matching events (for scripting).
+    #[arg(long, default_value_t = false)]
+    count: bool,
+    /// Output format: "default" or "table".
+    #[arg(long, value_enum, default_value_t = ListFormat::Default)]
+    format: ListFormat,
 }
 
 #[derive(Debug, Args)]
@@ -455,11 +543,43 @@ async fn main() -> Result<()> {
                 true
             }).collect();
 
-            if filtered.is_empty() {
+            if args.count {
+                println!("{}", filtered.len());
+            } else if filtered.is_empty() {
                 if !cli.quiet { println!("No events found."); }
             } else {
-                for event in &filtered {
-                    print_event(event, cli.show_builtin, cli.json);
+                match args.format {
+                    ListFormat::Table => {
+                        println!("{:<30} {:<12} {:<12} {:<15} {:<15}",
+                            "SUMMARY", "START", "END", "TYPE", "CLIENT");
+                        println!("{}", "-".repeat(84));
+                        for event in &filtered {
+                            let summary = event.summary_or_default();
+                            let start = event.start_str();
+                            let end = event.end_str();
+                            let shared = event.extended_properties.as_ref()
+                                .and_then(|p| p.shared.as_ref());
+                            let type_val = shared.and_then(|s| s.get("type"))
+                                .map(|s| s.as_str()).unwrap_or("");
+                            let client_val = shared.and_then(|s| s.get("client"))
+                                .map(|s| s.as_str()).unwrap_or("");
+                            // Truncate long values
+                            let trunc = |s: &str, max: usize| -> String {
+                                if s.len() > max { format!("{}...", &s[..max-3]) } else { s.to_string() }
+                            };
+                            println!("{:<30} {:<12} {:<12} {:<15} {:<15}",
+                                trunc(summary, 30),
+                                trunc(&start, 12),
+                                trunc(&end, 12),
+                                trunc(type_val, 15),
+                                trunc(client_val, 15));
+                        }
+                    }
+                    ListFormat::Default => {
+                        for event in &filtered {
+                            print_event(event, cli.show_builtin, cli.json);
+                        }
+                    }
                 }
             }
         }
@@ -993,6 +1113,57 @@ async fn main() -> Result<()> {
                 }
                 if !cli.quiet { println!("\nDone. {updated} event(s) updated."); }
             }
+            PropertiesAction::SetValue(args) => {
+                let (calendar_id, events) = fetch_events(&client, args.calendar_name.as_deref(), &config).await?;
+                if events.is_empty() {
+                    if !cli.quiet { println!("No events found."); }
+                    return Ok(());
+                }
+
+                let mut updated = 0u32;
+                let mut skipped = 0u32;
+                let mut skipped_no_id = 0u32;
+                for event in &events {
+                    let summary = event.summary_or_default();
+                    let start = event.start_str();
+                    let event_id = match &event.id {
+                        Some(id) => id,
+                        None => { skipped_no_id += 1; continue; }
+                    };
+
+                    let existing = event.shared_properties();
+                    match existing.get(&args.key) {
+                        Some(v) if v == &args.from => {}
+                        _ => { skipped += 1; continue; }
+                    }
+
+                    if !args.all {
+                        let prompt = format!(
+                            "Change {}='{}' to '{}' on '{summary}' ({start})?",
+                            args.key, args.from, args.to
+                        );
+                        match prompt_yes_no_quit(&prompt)? {
+                            Some(true) => {}
+                            Some(false) => { skipped += 1; continue; }
+                            None => {
+                                if !cli.quiet { println!("\nQuit. {updated} changed, {skipped} skipped."); }
+                                return Ok(());
+                            }
+                        }
+                    }
+
+                    let mut new_props = existing;
+                    new_props.insert(args.key.clone(), args.to.clone());
+                    client.patch_event_properties(&calendar_id, event_id, &new_props).await?;
+                    if !cli.quiet { println!("  changed on: {summary} ({start})"); }
+                    updated += 1;
+                }
+
+                if skipped_no_id > 0 {
+                    eprintln!("Warning: skipped {skipped_no_id} event(s) with no ID");
+                }
+                if !cli.quiet { println!("\nDone. {updated} changed, {skipped} skipped."); }
+            }
         },
         Command::Calendar { action } => match action {
             CalendarAction::Create { name } => {
@@ -1002,6 +1173,30 @@ async fn main() -> Result<()> {
                     println!("Created public calendar '{name}'");
                     println!("  id: {id}");
                 }
+            }
+            CalendarAction::Delete { name } => {
+                let calendars = client.list_calendars().await?;
+                let calendar_id = resolve_calendar_id(&calendars, Some(&name), &config)?;
+                use std::io::{BufRead, Write};
+                eprint!("Delete calendar '{name}'? This cannot be undone. [y/n]: ");
+                std::io::stderr().flush()?;
+                let mut line = String::new();
+                std::io::stdin().lock().read_line(&mut line)?;
+                match line.trim().to_lowercase().as_str() {
+                    "y" | "yes" => {
+                        client.delete_calendar(calendar_id).await?;
+                        if !cli.quiet { println!("Deleted calendar '{name}'."); }
+                    }
+                    _ => {
+                        if !cli.quiet { println!("Aborted."); }
+                    }
+                }
+            }
+            CalendarAction::Rename { name, new_name } => {
+                let calendars = client.list_calendars().await?;
+                let calendar_id = resolve_calendar_id(&calendars, Some(&name), &config)?;
+                client.rename_calendar(calendar_id, &new_name).await?;
+                if !cli.quiet { println!("Renamed calendar '{name}' to '{new_name}'."); }
             }
         },
         Command::MoveEvents(args) => {
@@ -1092,6 +1287,174 @@ async fn main() -> Result<()> {
                     println!("\nDry run complete. {moved} event(s) would be moved, {skipped} skipped.");
                 } else {
                     println!("\nDone. {moved} event(s) moved to '{}', {skipped} skipped.", args.target);
+                }
+            }
+        }
+        Command::Stats(args) => {
+            let (_, events) = fetch_events(&client, args.calendar_name.as_deref(), &config).await?;
+
+            println!("Total events: {}", events.len());
+
+            let mut by_type: BTreeMap<String, u32> = BTreeMap::new();
+            let mut by_client: BTreeMap<String, u32> = BTreeMap::new();
+            let mut by_month: BTreeMap<String, u32> = BTreeMap::new();
+
+            for event in &events {
+                let shared = event.extended_properties.as_ref()
+                    .and_then(|p| p.shared.as_ref());
+                let type_val = shared.and_then(|s| s.get("type"))
+                    .cloned().unwrap_or_else(|| "(no type)".to_string());
+                let client_val = shared.and_then(|s| s.get("client"))
+                    .cloned().unwrap_or_else(|| "(no client)".to_string());
+
+                *by_type.entry(type_val).or_insert(0) += 1;
+                *by_client.entry(client_val).or_insert(0) += 1;
+
+                if let Some(start) = &event.start {
+                    let month_str = if let Some(ref dt_str) = start.date_time {
+                        dt_str.get(..7).map(|s| s.to_string())
+                    } else if let Some(ref d_str) = start.date {
+                        d_str.get(..7).map(|s| s.to_string())
+                    } else {
+                        None
+                    };
+                    if let Some(m) = month_str {
+                        *by_month.entry(m).or_insert(0) += 1;
+                    }
+                }
+            }
+
+            println!("\nEvents by type:");
+            for (k, v) in &by_type {
+                println!("  {k}: {v}");
+            }
+
+            println!("\nEvents by client:");
+            for (k, v) in &by_client {
+                println!("  {k}: {v}");
+            }
+
+            println!("\nEvents by month:");
+            for (k, v) in &by_month {
+                println!("  {k}: {v}");
+            }
+        }
+        Command::DeleteAllEvents(args) => {
+            let (calendar_id, events) = fetch_events(&client, args.calendar_name.as_deref(), &config).await?;
+            if events.is_empty() {
+                if !cli.quiet { println!("No events found."); }
+                return Ok(());
+            }
+
+            if !cli.quiet {
+                println!("Found {} event(s)", events.len());
+                if !args.all {
+                    println!("  interactive mode: y=delete, n=skip, q=quit");
+                }
+                println!();
+            }
+
+            let mut deleted = 0u32;
+            let mut skipped = 0u32;
+            for event in &events {
+                let summary = event.summary_or_default();
+                let start = event.start_str();
+                let event_id = match &event.id {
+                    Some(id) => id,
+                    None => {
+                        eprintln!("  skipping event with no id: {summary}");
+                        skipped += 1;
+                        continue;
+                    }
+                };
+
+                if !args.all {
+                    let prompt = format!("  Delete '{summary}' ({start})?");
+                    match prompt_yes_no_quit(&prompt)? {
+                        Some(true) => {}
+                        Some(false) => { skipped += 1; continue; }
+                        None => {
+                            if !cli.quiet { println!("\nQuit. {deleted} event(s) deleted, {skipped} skipped."); }
+                            return Ok(());
+                        }
+                    }
+                }
+
+                client.delete_event(&calendar_id, event_id).await?;
+                if !cli.quiet { println!("  deleted: {summary} ({start})"); }
+                deleted += 1;
+            }
+
+            if !cli.quiet {
+                println!("\nDone. {deleted} event(s) deleted, {skipped} skipped.");
+            }
+        }
+        Command::CopyCalendar(args) => {
+            let calendars = client.list_calendars().await?;
+
+            let source_cal = calendars.iter()
+                .find(|c| c.summary.as_deref() == Some(&args.source))
+                .context(format!("no calendar named '{}' found", args.source))?;
+            let source_id = source_cal.id.as_deref().context("source calendar has no id")?.to_string();
+
+            let target_cal = calendars.iter()
+                .find(|c| c.summary.as_deref() == Some(&args.target))
+                .context(format!("no calendar named '{}' found", args.target))?;
+            let target_id = target_cal.id.as_deref().context("target calendar has no id")?.to_string();
+
+            if !cli.quiet { println!("Copying events from '{}' to '{}'\n", args.source, args.target); }
+
+            let events = client.list_all_events(&source_id).await?;
+            if events.is_empty() {
+                if !cli.quiet { println!("No events found in '{}'.", args.source); }
+                return Ok(());
+            }
+
+            if !cli.quiet { println!("Found {} event(s)\n", events.len()); }
+
+            let mut copied = 0u32;
+            let mut skipped = 0u32;
+            for event in &events {
+                let summary = event.summary_or_default();
+                let start = event.start_str();
+                if event.id.is_none() {
+                    eprintln!("  skipping event with no id: {summary}");
+                    skipped += 1;
+                    continue;
+                }
+
+                if args.dry_run {
+                    if !cli.quiet { println!("  [dry-run] would copy: {summary} ({start})"); }
+                    copied += 1;
+                } else {
+                    let mut payload = json!({ "summary": summary });
+                    if let Some(start) = &event.start {
+                        payload["start"] = serde_json::to_value(start)?;
+                    }
+                    if let Some(end) = &event.end {
+                        payload["end"] = serde_json::to_value(end)?;
+                    }
+                    if let Some(desc) = &event.description {
+                        payload["description"] = json!(desc);
+                    }
+                    if let Some(loc) = &event.location {
+                        payload["location"] = json!(loc);
+                    }
+                    if let Some(props) = &event.extended_properties {
+                        payload["extendedProperties"] = serde_json::to_value(props)?;
+                    }
+
+                    client.insert_event_raw(&target_id, &payload).await?;
+                    if !cli.quiet { println!("  copied: {summary} ({start})"); }
+                    copied += 1;
+                }
+            }
+
+            if !cli.quiet {
+                if args.dry_run {
+                    println!("\nDry run complete. {copied} event(s) would be copied, {skipped} skipped.");
+                } else {
+                    println!("\nDone. {copied} event(s) copied to '{}', {skipped} skipped.", args.target);
                 }
             }
         }
