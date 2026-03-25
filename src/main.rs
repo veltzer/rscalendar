@@ -1006,7 +1006,7 @@ async fn main() -> Result<()> {
                 println!("No events found.");
             } else {
                 for event in &events {
-                    print_event(event);
+                    print_event(event, cli.show_builtin, cli.json);
                 }
             }
         }
@@ -1015,14 +1015,14 @@ async fn main() -> Result<()> {
             let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), &config)?;
             let event = client.create_event(calendar_id, &args).await?;
             println!("Created event:");
-            print_event(&event);
+            print_event(&event, cli.show_builtin, cli.json);
         }
         Command::Update(args) => {
             let calendars = client.list_calendars().await?;
             let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), &config)?;
             let event = client.update_event(calendar_id, &args).await?;
             println!("Updated event:");
-            print_event(&event);
+            print_event(&event, cli.show_builtin, cli.json);
         }
         Command::Delete(args) => {
             let calendars = client.list_calendars().await?;
