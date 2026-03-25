@@ -103,6 +103,9 @@ async fn main() -> Result<()> {
             EventAction::Delete(args) => {
                 commands::event::cmd_event_delete(&client, &args, &config, &out).await?;
             }
+            EventAction::Edit(args) => {
+                commands::event::cmd_event_edit(&client, &args, &config, &out).await?;
+            }
         },
         Command::Check(args) => {
             commands::check::cmd_check(&client, &args, &config, &out).await?;

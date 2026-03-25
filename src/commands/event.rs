@@ -1,6 +1,4 @@
-use std::collections::HashMap;
-
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde_json::{Map, Value, json};
 
 use crate::cli::{DeleteArgs, EventEditArgs, OutputOptions, UpdateArgs, UpsertArgs};
