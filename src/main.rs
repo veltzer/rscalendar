@@ -32,7 +32,7 @@ impl Config {
         if !path.exists() {
             return Self::default();
         }
-        match std::fs::read_to_string(&path) {
+        let config: Self = match std::fs::read_to_string(&path) {
             Ok(contents) => toml::from_str(&contents).unwrap_or_else(|e| {
                 eprintln!("Warning: failed to parse {}: {e}", path.display());
                 Self::default()
@@ -41,7 +41,18 @@ impl Config {
                 eprintln!("Warning: failed to read {}: {e}", path.display());
                 Self::default()
             }
+        };
+
+        // Warn about empty property value lists
+        if let Some(properties) = &config.properties {
+            for (key, values) in properties {
+                if values.is_empty() {
+                    eprintln!("Warning: property '{key}' in config.toml has an empty list of allowed values");
+                }
+            }
         }
+
+        config
     }
 
     fn no_browser(&self) -> bool {
@@ -190,14 +201,6 @@ struct MoveEventsArgs {
     /// Target calendar name to move events into.
     #[arg(long)]
     target: String,
-
-    /// Shared extended property key to set on moved events.
-    #[arg(long)]
-    property_key: Option<String>,
-
-    /// Shared extended property value to set on moved events (requires --property-key).
-    #[arg(long)]
-    property_value: Option<String>,
 
     /// Show what would be done without making changes.
     #[arg(long, default_value_t = false)]
@@ -1749,10 +1752,6 @@ async fn main() -> Result<()> {
             }
         },
         Command::MoveEvents(args) => {
-            if args.property_key.is_some() != args.property_value.is_some() {
-                bail!("--property-key and --property-value must be used together");
-            }
-
             let calendars = client.list_calendars().await?;
 
             let source_cal = calendars
@@ -1776,9 +1775,6 @@ async fn main() -> Result<()> {
                 .to_string();
 
             println!("Moving events from '{}' to '{}'", args.source, args.target);
-            if let (Some(key), Some(value)) = (&args.property_key, &args.property_value) {
-                println!("  setting property: {key}={value}");
-            }
             if !args.all {
                 println!("  interactive mode: y=move, n=skip, q=quit");
             }
@@ -1826,24 +1822,12 @@ async fn main() -> Result<()> {
                 }
 
                 if args.dry_run {
-                    print!("  [dry-run] would move: {summary} ({start})");
-                    if let (Some(key), Some(value)) = (&args.property_key, &args.property_value) {
-                        print!(" with {key}={value}");
-                    }
-                    println!();
+                    println!("  [dry-run] would move: {summary} ({start})");
                     moved += 1;
                 } else {
                     let mut payload = json!({
                         "summary": summary,
                     });
-
-                    if let (Some(key), Some(value)) = (&args.property_key, &args.property_value) {
-                        let mut shared = Map::new();
-                        shared.insert(key.clone(), json!(value));
-                        payload["extendedProperties"] = json!({
-                            "shared": shared
-                        });
-                    }
 
                     if let Some(start) = &event.start {
                         payload["start"] = serde_json::to_value(start)?;
@@ -1857,14 +1841,13 @@ async fn main() -> Result<()> {
                     if let Some(loc) = &event.location {
                         payload["location"] = json!(loc);
                     }
+                    if let Some(props) = &event.extended_properties {
+                        payload["extendedProperties"] = serde_json::to_value(props)?;
+                    }
 
                     client.insert_event_raw(&target_id, &payload).await?;
                     client.delete_event(&source_id, event_id).await?;
-                    print!("  moved: {summary} ({start})");
-                    if let (Some(key), Some(value)) = (&args.property_key, &args.property_value) {
-                        print!(" with {key}={value}");
-                    }
-                    println!();
+                    println!("  moved: {summary} ({start})");
                     moved += 1;
                 }
             }
