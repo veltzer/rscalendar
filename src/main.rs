@@ -151,10 +151,11 @@ enum Command {
         #[command(subcommand)]
         action: CalendarAction,
     },
-    /// Interactively add properties to events from the allowed values in config.
-    AddProperties(AddPropertiesArgs),
-    /// Check that all event properties have keys and values defined in config.
-    CheckProperties(CheckPropertiesArgs),
+    /// Manage event properties.
+    Properties {
+        #[command(subcommand)]
+        action: PropertiesAction,
+    },
     /// Interactively move events from one calendar to another.
     MoveEvents(MoveEventsArgs),
     /// Authenticate with Google via OAuth2 and cache the token.
@@ -203,8 +204,20 @@ struct MoveEventsArgs {
     all: bool,
 }
 
+#[derive(Debug, Subcommand)]
+enum PropertiesAction {
+    /// Add properties to events (validates against config).
+    Add(PropertiesAddArgs),
+    /// Check that all event properties have keys and values defined in config.
+    Check(PropertiesCalendarArgs),
+    /// Delete a property from events.
+    Delete(PropertiesDeleteArgs),
+    /// Rename a property key on events.
+    Rename(PropertiesRenameArgs),
+}
+
 #[derive(Debug, Args)]
-struct AddPropertiesArgs {
+struct PropertiesAddArgs {
     /// Calendar name (default: from config).
     #[arg(long)]
     calendar_name: Option<String>,
@@ -223,10 +236,44 @@ struct AddPropertiesArgs {
 }
 
 #[derive(Debug, Args)]
-struct CheckPropertiesArgs {
+struct PropertiesCalendarArgs {
     /// Calendar name (default: from config).
     #[arg(long)]
     calendar_name: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct PropertiesDeleteArgs {
+    /// Calendar name (default: from config).
+    #[arg(long)]
+    calendar_name: Option<String>,
+
+    /// Property key to delete.
+    #[arg(long)]
+    key: String,
+
+    /// Apply to all events without prompting.
+    #[arg(long, default_value_t = false)]
+    all: bool,
+}
+
+#[derive(Debug, Args)]
+struct PropertiesRenameArgs {
+    /// Calendar name (default: from config).
+    #[arg(long)]
+    calendar_name: Option<String>,
+
+    /// Current property key name.
+    #[arg(long)]
+    from: String,
+
+    /// New property key name.
+    #[arg(long)]
+    to: String,
+
+    /// Apply to all events without prompting.
+    #[arg(long, default_value_t = false)]
+    all: bool,
 }
 
 #[derive(Debug, Args)]
@@ -1030,76 +1077,239 @@ async fn main() -> Result<()> {
             client.delete_event(calendar_id, &args.event_id).await?;
             println!("Deleted event '{}'.", args.event_id);
         }
-        Command::AddProperties(args) => {
-            if args.key.is_some() != args.value.is_some() {
-                bail!("--key and --value must be used together");
-            }
-
-            let properties = config.properties.as_ref()
-                .context("no [properties] section in config.toml")?;
-            if properties.is_empty() {
-                bail!("no properties defined in [properties] section of config.toml");
-            }
-
-            // Validate --key and --value against config
-            if let (Some(key), Some(value)) = (&args.key, &args.value) {
-                let allowed = properties.get(key)
-                    .with_context(|| format!("key '{key}' is not defined in [properties] in config.toml"))?;
-                if !allowed.contains(value) {
-                    bail!(
-                        "value '{value}' is not allowed for key '{key}'. Allowed: {}",
-                        allowed.join(", ")
-                    );
+        Command::Properties { action } => match action {
+            PropertiesAction::Add(args) => {
+                if args.key.is_some() != args.value.is_some() {
+                    bail!("--key and --value must be used together");
                 }
-            }
 
-            let calendars = client.list_calendars().await?;
-            let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), &config)?;
-            let events = client.list_all_events(calendar_id).await?;
-
-            if events.is_empty() {
-                println!("No events found.");
-                return Ok(());
-            }
-
-            let sorted_keys: Vec<&String> = {
-                let mut keys: Vec<_> = properties.keys().collect();
-                keys.sort();
-                keys
-            };
-
-            println!("Adding properties to {} event(s)\n", events.len());
-
-            let mut updated = 0u32;
-            let mut skipped = 0u32;
-            for event in &events {
-                let summary = event.summary.as_deref().unwrap_or("<untitled>");
-                let start = event
-                    .start
-                    .as_ref()
-                    .map(EventDateTime::describe)
-                    .unwrap_or_else(|| "unknown".to_string());
-                let event_id = match &event.id {
-                    Some(id) => id,
-                    None => continue,
-                };
-
-                let existing: std::collections::HashMap<String, String> = event
-                    .extended_properties
-                    .as_ref()
-                    .and_then(|p| p.shared.clone())
-                    .unwrap_or_default();
+                let properties = config.properties.as_ref()
+                    .context("no [properties] section in config.toml")?;
+                if properties.is_empty() {
+                    bail!("no properties defined in [properties] section of config.toml");
+                }
 
                 if let (Some(key), Some(value)) = (&args.key, &args.value) {
-                    // Single key+value mode
-                    let already_set = existing.get(key).is_some_and(|v| v == value);
-                    if already_set {
+                    let allowed = properties.get(key)
+                        .with_context(|| format!("key '{key}' is not defined in [properties] in config.toml"))?;
+                    if !allowed.contains(value) {
+                        bail!(
+                            "value '{value}' is not allowed for key '{key}'. Allowed: {}",
+                            allowed.join(", ")
+                        );
+                    }
+                }
+
+                let calendars = client.list_calendars().await?;
+                let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), &config)?;
+                let events = client.list_all_events(calendar_id).await?;
+
+                if events.is_empty() {
+                    println!("No events found.");
+                    return Ok(());
+                }
+
+                let sorted_keys: Vec<&String> = {
+                    let mut keys: Vec<_> = properties.keys().collect();
+                    keys.sort();
+                    keys
+                };
+
+                println!("Adding properties to {} event(s)\n", events.len());
+
+                let mut updated = 0u32;
+                let mut skipped = 0u32;
+                for event in &events {
+                    let summary = event.summary.as_deref().unwrap_or("<untitled>");
+                    let start = event
+                        .start
+                        .as_ref()
+                        .map(EventDateTime::describe)
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let event_id = match &event.id {
+                        Some(id) => id,
+                        None => continue,
+                    };
+
+                    let existing: std::collections::HashMap<String, String> = event
+                        .extended_properties
+                        .as_ref()
+                        .and_then(|p| p.shared.clone())
+                        .unwrap_or_default();
+
+                    if let (Some(key), Some(value)) = (&args.key, &args.value) {
+                        let already_set = existing.get(key).is_some_and(|v| v == value);
+                        if already_set {
+                            skipped += 1;
+                            continue;
+                        }
+
+                        if !args.all {
+                            let prompt = format!("Set {key}={value} on '{summary}' ({start})?");
+                            match prompt_yes_no_quit(&prompt)? {
+                                Some(true) => {}
+                                Some(false) => {
+                                    skipped += 1;
+                                    continue;
+                                }
+                                None => {
+                                    println!("\nQuit. {updated} updated, {skipped} skipped.");
+                                    return Ok(());
+                                }
+                            }
+                        }
+
+                        let mut new_props = existing;
+                        new_props.insert(key.clone(), value.clone());
+                        client.patch_event_properties(calendar_id, event_id, &new_props).await?;
+                        println!("  set on: {summary} ({start})");
+                        updated += 1;
+                    } else {
+                        eprintln!("Event: {summary} ({start})");
+                        if !existing.is_empty() {
+                            for (k, v) in &existing {
+                                eprintln!("  existing {k}: {v}");
+                            }
+                        }
+
+                        let mut new_props = existing.clone();
+                        let mut changed = false;
+
+                        for key in &sorted_keys {
+                            let values = &properties[*key];
+                            if existing.contains_key(*key) {
+                                continue;
+                            }
+                            let prompt = format!("  Select {key}:");
+                            if let Some(value) = prompt_select(&prompt, values)? {
+                                new_props.insert((*key).clone(), value);
+                                changed = true;
+                            }
+                        }
+
+                        if changed {
+                            client.patch_event_properties(calendar_id, event_id, &new_props).await?;
+                            eprintln!("  updated\n");
+                            updated += 1;
+                        } else {
+                            eprintln!("  no changes\n");
+                            skipped += 1;
+                        }
+                    }
+                }
+
+                println!("Done. {updated} updated, {skipped} skipped.");
+            }
+            PropertiesAction::Check(args) => {
+                let properties = config.properties.as_ref()
+                    .context("no [properties] section in config.toml")?;
+                if properties.is_empty() {
+                    bail!("no properties defined in [properties] section of config.toml");
+                }
+
+                let calendars = client.list_calendars().await?;
+                let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), &config)?;
+                let events = client.list_all_events(calendar_id).await?;
+
+                if events.is_empty() {
+                    println!("No events found.");
+                    return Ok(());
+                }
+
+                let mut issues = 0u32;
+                for event in &events {
+                    let summary = event.summary.as_deref().unwrap_or("<untitled>");
+                    let start = event
+                        .start
+                        .as_ref()
+                        .map(EventDateTime::describe)
+                        .unwrap_or_else(|| "unknown".to_string());
+
+                    let shared = event
+                        .extended_properties
+                        .as_ref()
+                        .and_then(|p| p.shared.as_ref());
+
+                    let mut event_issues: Vec<String> = Vec::new();
+
+                    for key in properties.keys() {
+                        match shared.and_then(|s| s.get(key)) {
+                            None => {
+                                event_issues.push(format!("missing property '{key}'"));
+                            }
+                            Some(value) => {
+                                let allowed = &properties[key];
+                                if !allowed.contains(value) {
+                                    event_issues.push(format!(
+                                        "property '{key}' has value '{value}' which is not in allowed values: {}",
+                                        allowed.join(", ")
+                                    ));
+                                }
+                            }
+                        }
+                    }
+
+                    if let Some(shared) = shared {
+                        for key in shared.keys() {
+                            if !properties.contains_key(key) {
+                                event_issues.push(format!("unknown property '{key}'"));
+                            }
+                        }
+                    }
+
+                    if !event_issues.is_empty() {
+                        println!("{summary} ({start}):");
+                        for issue in &event_issues {
+                            println!("  - {issue}");
+                        }
+                        issues += event_issues.len() as u32;
+                    }
+                }
+
+                if issues == 0 {
+                    println!("All {} event(s) have valid properties.", events.len());
+                } else {
+                    println!("\n{issues} issue(s) found across {} event(s).", events.len());
+                }
+            }
+            PropertiesAction::Delete(args) => {
+                let calendars = client.list_calendars().await?;
+                let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), &config)?;
+                let events = client.list_all_events(calendar_id).await?;
+
+                if events.is_empty() {
+                    println!("No events found.");
+                    return Ok(());
+                }
+
+                let mut updated = 0u32;
+                let mut skipped = 0u32;
+                for event in &events {
+                    let summary = event.summary.as_deref().unwrap_or("<untitled>");
+                    let start = event
+                        .start
+                        .as_ref()
+                        .map(EventDateTime::describe)
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let event_id = match &event.id {
+                        Some(id) => id,
+                        None => continue,
+                    };
+
+                    let mut existing: std::collections::HashMap<String, String> = event
+                        .extended_properties
+                        .as_ref()
+                        .and_then(|p| p.shared.clone())
+                        .unwrap_or_default();
+
+                    if !existing.contains_key(&args.key) {
                         skipped += 1;
                         continue;
                     }
 
                     if !args.all {
-                        let prompt = format!("Set {key}={value} on '{summary}' ({start})?");
+                        let current_value = &existing[&args.key];
+                        let prompt = format!("Delete {}={current_value} from '{summary}' ({start})?", args.key);
                         match prompt_yes_no_quit(&prompt)? {
                             Some(true) => {}
                             Some(false) => {
@@ -1107,128 +1317,85 @@ async fn main() -> Result<()> {
                                 continue;
                             }
                             None => {
-                                println!("\nQuit. {updated} updated, {skipped} skipped.");
+                                println!("\nQuit. {updated} deleted, {skipped} skipped.");
                                 return Ok(());
                             }
                         }
                     }
 
-                    let mut new_props = existing;
-                    new_props.insert(key.clone(), value.clone());
-                    client.patch_event_properties(calendar_id, event_id, &new_props).await?;
-                    println!("  set on: {summary} ({start})");
+                    existing.remove(&args.key);
+                    client.patch_event_properties(calendar_id, event_id, &existing).await?;
+                    println!("  deleted from: {summary} ({start})");
                     updated += 1;
-                } else {
-                    // Interactive mode: prompt for all missing properties
-                    eprintln!("Event: {summary} ({start})");
-                    if !existing.is_empty() {
-                        for (k, v) in &existing {
-                            eprintln!("  existing {k}: {v}");
-                        }
-                    }
+                }
 
-                    let mut new_props = existing.clone();
-                    let mut changed = false;
+                println!("\nDone. {updated} deleted, {skipped} skipped.");
+            }
+            PropertiesAction::Rename(args) => {
+                let calendars = client.list_calendars().await?;
+                let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), &config)?;
+                let events = client.list_all_events(calendar_id).await?;
 
-                    for key in &sorted_keys {
-                        let values = &properties[*key];
-                        if existing.contains_key(*key) {
+                if events.is_empty() {
+                    println!("No events found.");
+                    return Ok(());
+                }
+
+                let mut updated = 0u32;
+                let mut skipped = 0u32;
+                for event in &events {
+                    let summary = event.summary.as_deref().unwrap_or("<untitled>");
+                    let start = event
+                        .start
+                        .as_ref()
+                        .map(EventDateTime::describe)
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let event_id = match &event.id {
+                        Some(id) => id,
+                        None => continue,
+                    };
+
+                    let mut existing: std::collections::HashMap<String, String> = event
+                        .extended_properties
+                        .as_ref()
+                        .and_then(|p| p.shared.clone())
+                        .unwrap_or_default();
+
+                    let value = match existing.remove(&args.from) {
+                        Some(v) => v,
+                        None => {
+                            skipped += 1;
                             continue;
                         }
-                        let prompt = format!("  Select {key}:");
-                        if let Some(value) = prompt_select(&prompt, values)? {
-                            new_props.insert((*key).clone(), value);
-                            changed = true;
-                        }
-                    }
+                    };
 
-                    if changed {
-                        client.patch_event_properties(calendar_id, event_id, &new_props).await?;
-                        eprintln!("  updated\n");
-                        updated += 1;
-                    } else {
-                        eprintln!("  no changes\n");
-                        skipped += 1;
-                    }
-                }
-            }
-
-            println!("Done. {updated} updated, {skipped} skipped.");
-        }
-        Command::CheckProperties(args) => {
-            let properties = config.properties.as_ref()
-                .context("no [properties] section in config.toml")?;
-            if properties.is_empty() {
-                bail!("no properties defined in [properties] section of config.toml");
-            }
-
-            let calendars = client.list_calendars().await?;
-            let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), &config)?;
-            let events = client.list_all_events(calendar_id).await?;
-
-            if events.is_empty() {
-                println!("No events found.");
-                return Ok(());
-            }
-
-            let mut issues = 0u32;
-            for event in &events {
-                let summary = event.summary.as_deref().unwrap_or("<untitled>");
-                let start = event
-                    .start
-                    .as_ref()
-                    .map(EventDateTime::describe)
-                    .unwrap_or_else(|| "unknown".to_string());
-
-                let shared = event
-                    .extended_properties
-                    .as_ref()
-                    .and_then(|p| p.shared.as_ref());
-
-                let mut event_issues: Vec<String> = Vec::new();
-
-                // Check for missing keys
-                for key in properties.keys() {
-                    match shared.and_then(|s| s.get(key)) {
-                        None => {
-                            event_issues.push(format!("missing property '{key}'"));
-                        }
-                        Some(value) => {
-                            let allowed = &properties[key];
-                            if !allowed.contains(value) {
-                                event_issues.push(format!(
-                                    "property '{key}' has value '{value}' which is not in allowed values: {}",
-                                    allowed.join(", ")
-                                ));
+                    if !args.all {
+                        let prompt = format!(
+                            "Rename '{}'='{}' to '{}'='{}' on '{summary}' ({start})?",
+                            args.from, value, args.to, value
+                        );
+                        match prompt_yes_no_quit(&prompt)? {
+                            Some(true) => {}
+                            Some(false) => {
+                                skipped += 1;
+                                continue;
+                            }
+                            None => {
+                                println!("\nQuit. {updated} renamed, {skipped} skipped.");
+                                return Ok(());
                             }
                         }
                     }
+
+                    existing.insert(args.to.clone(), value);
+                    client.patch_event_properties(calendar_id, event_id, &existing).await?;
+                    println!("  renamed on: {summary} ({start})");
+                    updated += 1;
                 }
 
-                // Check for unknown keys
-                if let Some(shared) = shared {
-                    for key in shared.keys() {
-                        if !properties.contains_key(key) {
-                            event_issues.push(format!("unknown property '{key}'"));
-                        }
-                    }
-                }
-
-                if !event_issues.is_empty() {
-                    println!("{summary} ({start}):");
-                    for issue in &event_issues {
-                        println!("  - {issue}");
-                    }
-                    issues += event_issues.len() as u32;
-                }
+                println!("\nDone. {updated} renamed, {skipped} skipped.");
             }
-
-            if issues == 0 {
-                println!("All {} event(s) have valid properties.", events.len());
-            } else {
-                println!("\n{issues} issue(s) found across {} event(s).", events.len());
-            }
-        }
+        },
         Command::Calendar { action } => match action {
             CalendarAction::Create { name } => {
                 let calendar = client.create_calendar(&name).await?;
