@@ -1296,7 +1296,7 @@ async fn main() -> Result<()> {
                         None => continue,
                     };
 
-                    let mut existing: std::collections::HashMap<String, String> = event
+                    let existing: std::collections::HashMap<String, String> = event
                         .extended_properties
                         .as_ref()
                         .and_then(|p| p.shared.clone())
@@ -1323,8 +1323,26 @@ async fn main() -> Result<()> {
                         }
                     }
 
-                    existing.remove(&args.key);
-                    client.patch_event_properties(calendar_id, event_id, &existing).await?;
+                    let url = format!(
+                        "{}/calendars/{}/events/{}",
+                        API_BASE,
+                        encode(calendar_id),
+                        encode(event_id)
+                    );
+                    let mut shared = Map::new();
+                    shared.insert(args.key.clone(), Value::Null);
+                    let payload = json!({
+                        "extendedProperties": {
+                            "shared": shared
+                        }
+                    });
+                    client.authorized(client.http.patch(url))
+                        .json(&payload)
+                        .send()
+                        .await
+                        .context("failed to delete property")?
+                        .error_for_status()
+                        .map_err(api_error)?;
                     println!("  deleted from: {summary} ({start})");
                     updated += 1;
                 }
