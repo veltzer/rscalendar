@@ -20,6 +20,8 @@ const CALENDAR_SCOPE: &str = "https://www.googleapis.com/auth/calendar";
 struct Config {
     calendar_name: Option<String>,
     no_browser: Option<bool>,
+    /// Allowed property definitions: key -> list of allowed values.
+    properties: Option<std::collections::HashMap<String, Vec<String>>>,
 }
 
 impl Config {
@@ -141,6 +143,10 @@ enum Command {
         #[command(subcommand)]
         action: CalendarAction,
     },
+    /// Interactively add properties to events from the allowed values in config.
+    AddProperties(AddPropertiesArgs),
+    /// Check that all event properties have keys and values defined in config.
+    CheckProperties(CheckPropertiesArgs),
     /// Interactively move events from one calendar to another.
     MoveEvents(MoveEventsArgs),
     /// Authenticate with Google via OAuth2 and cache the token.
@@ -184,9 +190,23 @@ struct MoveEventsArgs {
     #[arg(long, default_value_t = false)]
     dry_run: bool,
 
-    /// Prompt for each event before moving (y/n/q).
+    /// Move all events without prompting.
     #[arg(long, default_value_t = false)]
-    interactive: bool,
+    all: bool,
+}
+
+#[derive(Debug, Args)]
+struct AddPropertiesArgs {
+    /// Calendar name (default: from config).
+    #[arg(long)]
+    calendar_name: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct CheckPropertiesArgs {
+    /// Calendar name (default: from config).
+    #[arg(long)]
+    calendar_name: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -541,6 +561,39 @@ impl GoogleCalendarClient {
             .context("failed to decode updated event response")
     }
 
+    async fn patch_event_properties(
+        &self,
+        calendar_id: &str,
+        event_id: &str,
+        shared: &std::collections::HashMap<String, String>,
+    ) -> Result<CalendarEvent> {
+        let url = format!(
+            "{}/calendars/{}/events/{}",
+            API_BASE,
+            encode(calendar_id),
+            encode(event_id)
+        );
+
+        let payload = json!({
+            "extendedProperties": {
+                "shared": shared
+            }
+        });
+
+        let response = self
+            .authorized(self.http.patch(url))
+            .json(&payload)
+            .send()
+            .await
+            .context("failed to patch event properties")?;
+
+        let response = response.error_for_status().map_err(api_error)?;
+        response
+            .json()
+            .await
+            .context("failed to decode patched event")
+    }
+
     async fn delete_event(&self, calendar_id: &str, event_id: &str) -> Result<()> {
         let url = format!(
             "{}/calendars/{}/events/{}",
@@ -732,6 +785,30 @@ fn resolve_calendar_id<'a>(
         .context("calendar has no id")
 }
 
+fn prompt_select(prompt: &str, options: &[String]) -> Result<Option<String>> {
+    use std::io::{Write, BufRead};
+    eprintln!("{prompt}");
+    for (i, opt) in options.iter().enumerate() {
+        eprintln!("  {}: {opt}", i + 1);
+    }
+    eprintln!("  s: skip this property");
+    eprint!("  choice: ");
+    std::io::stderr().flush()?;
+    let mut line = String::new();
+    std::io::stdin().lock().read_line(&mut line)?;
+    let trimmed = line.trim().to_lowercase();
+    if trimmed == "s" || trimmed == "skip" {
+        return Ok(None);
+    }
+    if let Ok(n) = trimmed.parse::<usize>() {
+        if n >= 1 && n <= options.len() {
+            return Ok(Some(options[n - 1].clone()));
+        }
+    }
+    eprintln!("  invalid choice, skipping");
+    Ok(None)
+}
+
 fn prompt_yes_no_quit(message: &str) -> Result<Option<bool>> {
     use std::io::{Write, BufRead};
     loop {
@@ -822,6 +899,11 @@ async fn main() -> Result<()> {
 
 # Don't open browser during auth (useful for headless machines)
 # no_browser = false
+
+# Allowed properties for events (used by add-properties and check-properties)
+# [properties]
+# company = [\"Amdocs\", \"Intel\", \"Google\"]
+# course = [\"Linux Fundamentals\", \"Advanced Python\"]
 "
         );
         return Ok(());
@@ -889,6 +971,157 @@ async fn main() -> Result<()> {
             client.delete_event(calendar_id, &args.event_id).await?;
             println!("Deleted event '{}'.", args.event_id);
         }
+        Command::AddProperties(args) => {
+            let properties = config.properties.as_ref()
+                .context("no [properties] section in config.toml")?;
+            if properties.is_empty() {
+                bail!("no properties defined in [properties] section of config.toml");
+            }
+
+            let calendars = client.list_calendars().await?;
+            let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), &config)?;
+            let events = client.list_all_events(calendar_id).await?;
+
+            if events.is_empty() {
+                println!("No events found.");
+                return Ok(());
+            }
+
+            let sorted_keys: Vec<&String> = {
+                let mut keys: Vec<_> = properties.keys().collect();
+                keys.sort();
+                keys
+            };
+
+            println!("Adding properties to {} event(s)\n", events.len());
+
+            let mut updated = 0u32;
+            for event in &events {
+                let summary = event.summary.as_deref().unwrap_or("<untitled>");
+                let start = event
+                    .start
+                    .as_ref()
+                    .map(EventDateTime::describe)
+                    .unwrap_or_else(|| "unknown".to_string());
+                let event_id = match &event.id {
+                    Some(id) => id,
+                    None => continue,
+                };
+
+                // Show existing properties
+                let existing: std::collections::HashMap<String, String> = event
+                    .extended_properties
+                    .as_ref()
+                    .and_then(|p| p.shared.clone())
+                    .unwrap_or_default();
+
+                eprintln!("Event: {summary} ({start})");
+                if !existing.is_empty() {
+                    for (k, v) in &existing {
+                        eprintln!("  existing {k}: {v}");
+                    }
+                }
+
+                let mut new_props = existing.clone();
+                let mut changed = false;
+
+                for key in &sorted_keys {
+                    let values = &properties[*key];
+                    if existing.contains_key(*key) {
+                        continue;
+                    }
+                    let prompt = format!("  Select {key}:");
+                    if let Some(value) = prompt_select(&prompt, values)? {
+                        new_props.insert((*key).clone(), value);
+                        changed = true;
+                    }
+                }
+
+                if changed {
+                    client.patch_event_properties(calendar_id, event_id, &new_props).await?;
+                    eprintln!("  updated\n");
+                    updated += 1;
+                } else {
+                    eprintln!("  no changes\n");
+                }
+            }
+
+            println!("Done. {updated} event(s) updated.");
+        }
+        Command::CheckProperties(args) => {
+            let properties = config.properties.as_ref()
+                .context("no [properties] section in config.toml")?;
+            if properties.is_empty() {
+                bail!("no properties defined in [properties] section of config.toml");
+            }
+
+            let calendars = client.list_calendars().await?;
+            let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), &config)?;
+            let events = client.list_all_events(calendar_id).await?;
+
+            if events.is_empty() {
+                println!("No events found.");
+                return Ok(());
+            }
+
+            let mut issues = 0u32;
+            for event in &events {
+                let summary = event.summary.as_deref().unwrap_or("<untitled>");
+                let start = event
+                    .start
+                    .as_ref()
+                    .map(EventDateTime::describe)
+                    .unwrap_or_else(|| "unknown".to_string());
+
+                let shared = event
+                    .extended_properties
+                    .as_ref()
+                    .and_then(|p| p.shared.as_ref());
+
+                let mut event_issues: Vec<String> = Vec::new();
+
+                // Check for missing keys
+                for key in properties.keys() {
+                    match shared.and_then(|s| s.get(key)) {
+                        None => {
+                            event_issues.push(format!("missing property '{key}'"));
+                        }
+                        Some(value) => {
+                            let allowed = &properties[key];
+                            if !allowed.contains(value) {
+                                event_issues.push(format!(
+                                    "property '{key}' has value '{value}' which is not in allowed values: {}",
+                                    allowed.join(", ")
+                                ));
+                            }
+                        }
+                    }
+                }
+
+                // Check for unknown keys
+                if let Some(shared) = shared {
+                    for key in shared.keys() {
+                        if !properties.contains_key(key) {
+                            event_issues.push(format!("unknown property '{key}'"));
+                        }
+                    }
+                }
+
+                if !event_issues.is_empty() {
+                    println!("{summary} ({start}):");
+                    for issue in &event_issues {
+                        println!("  - {issue}");
+                    }
+                    issues += event_issues.len() as u32;
+                }
+            }
+
+            if issues == 0 {
+                println!("All {} event(s) have valid properties.", events.len());
+            } else {
+                println!("\n{issues} issue(s) found across {} event(s).", events.len());
+            }
+        }
         Command::Calendar { action } => match action {
             CalendarAction::Create { name } => {
                 let calendar = client.create_calendar(&name).await?;
@@ -928,7 +1161,7 @@ async fn main() -> Result<()> {
             if let (Some(key), Some(value)) = (&args.property_key, &args.property_value) {
                 println!("  setting property: {key}={value}");
             }
-            if args.interactive {
+            if !args.all {
                 println!("  interactive mode: y=move, n=skip, q=quit");
             }
             println!();
@@ -959,7 +1192,7 @@ async fn main() -> Result<()> {
                     }
                 };
 
-                if args.interactive {
+                if !args.all {
                     let prompt = format!("  Move '{summary}' ({start})?");
                     match prompt_yes_no_quit(&prompt)? {
                         Some(true) => {}
