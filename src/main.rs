@@ -68,10 +68,6 @@ enum Command {
         #[command(subcommand)]
         action: PropertiesAction,
     },
-    /// Delete all events from a calendar.
-    DeleteAllEvents(DeleteAllEventsArgs),
-    /// Copy all events from one calendar to another.
-    CopyCalendar(CopyCalendarArgs),
     /// Print statistics about events (counts by type, client, month).
     Stats(CalendarNameArgs),
     /// Interactively move events from one calendar to another.
@@ -105,6 +101,10 @@ enum CalendarAction {
         /// New name for the calendar.
         new_name: String,
     },
+    /// Delete all events from a calendar.
+    Clear(CalendarClearArgs),
+    /// Copy all events from one calendar to another.
+    Copy(CalendarCopyArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -233,7 +233,7 @@ struct PropertiesSetValueArgs {
 }
 
 #[derive(Debug, Args)]
-struct DeleteAllEventsArgs {
+struct CalendarClearArgs {
     /// Calendar name (default: from config).
     #[arg(long)]
     calendar_name: Option<String>,
@@ -243,7 +243,7 @@ struct DeleteAllEventsArgs {
 }
 
 #[derive(Debug, Args)]
-struct CopyCalendarArgs {
+struct CalendarCopyArgs {
     /// Source calendar name to copy events from.
     #[arg(long)]
     source: String,
@@ -1198,6 +1198,125 @@ async fn main() -> Result<()> {
                 client.rename_calendar(calendar_id, &new_name).await?;
                 if !cli.quiet { println!("Renamed calendar '{name}' to '{new_name}'."); }
             }
+            CalendarAction::Clear(args) => {
+                let (calendar_id, events) = fetch_events(&client, args.calendar_name.as_deref(), &config).await?;
+                if events.is_empty() {
+                    if !cli.quiet { println!("No events found."); }
+                    return Ok(());
+                }
+
+                if !cli.quiet {
+                    println!("Found {} event(s)", events.len());
+                    if !args.all {
+                        println!("  interactive mode: y=delete, n=skip, q=quit");
+                    }
+                    println!();
+                }
+
+                let mut deleted = 0u32;
+                let mut skipped = 0u32;
+                for event in &events {
+                    let summary = event.summary_or_default();
+                    let start = event.start_str();
+                    let event_id = match &event.id {
+                        Some(id) => id,
+                        None => {
+                            eprintln!("  skipping event with no id: {summary}");
+                            skipped += 1;
+                            continue;
+                        }
+                    };
+
+                    if !args.all {
+                        let prompt = format!("  Delete '{summary}' ({start})?");
+                        match prompt_yes_no_quit(&prompt)? {
+                            Some(true) => {}
+                            Some(false) => { skipped += 1; continue; }
+                            None => {
+                                if !cli.quiet { println!("\nQuit. {deleted} event(s) deleted, {skipped} skipped."); }
+                                return Ok(());
+                            }
+                        }
+                    }
+
+                    client.delete_event(&calendar_id, event_id).await?;
+                    if !cli.quiet { println!("  deleted: {summary} ({start})"); }
+                    deleted += 1;
+                }
+
+                if !cli.quiet {
+                    println!("\nDone. {deleted} event(s) deleted, {skipped} skipped.");
+                }
+            }
+            CalendarAction::Copy(args) => {
+                let calendars = client.list_calendars().await?;
+
+                let source_cal = calendars.iter()
+                    .find(|c| c.summary.as_deref() == Some(&args.source))
+                    .context(format!("no calendar named '{}' found", args.source))?;
+                let source_id = source_cal.id.as_deref().context("source calendar has no id")?.to_string();
+
+                let target_cal = calendars.iter()
+                    .find(|c| c.summary.as_deref() == Some(&args.target))
+                    .context(format!("no calendar named '{}' found", args.target))?;
+                let target_id = target_cal.id.as_deref().context("target calendar has no id")?.to_string();
+
+                if !cli.quiet { println!("Copying events from '{}' to '{}'\n", args.source, args.target); }
+
+                let events = client.list_all_events(&source_id).await?;
+                if events.is_empty() {
+                    if !cli.quiet { println!("No events found in '{}'.", args.source); }
+                    return Ok(());
+                }
+
+                if !cli.quiet { println!("Found {} event(s)\n", events.len()); }
+
+                let mut copied = 0u32;
+                let mut skipped = 0u32;
+                for event in &events {
+                    let summary = event.summary_or_default();
+                    let start = event.start_str();
+                    if event.id.is_none() {
+                        eprintln!("  skipping event with no id: {summary}");
+                        skipped += 1;
+                        continue;
+                    }
+
+                    if args.dry_run {
+                        if !cli.quiet { println!("  [dry-run] would copy: {summary} ({start})"); }
+                        copied += 1;
+                    } else {
+                        let mut payload = json!({ "summary": summary });
+                        if let Some(start) = &event.start {
+                            payload["start"] = serde_json::to_value(start)?;
+                        }
+                        if let Some(end) = &event.end {
+                            payload["end"] = serde_json::to_value(end)?;
+                        }
+                        if let Some(desc) = &event.description {
+                            payload["description"] = json!(desc);
+                        }
+                        if let Some(loc) = &event.location {
+                            payload["location"] = json!(loc);
+                        }
+                        if let Some(props) = &event.extended_properties {
+                            payload["extendedProperties"] = serde_json::to_value(props)?;
+                        }
+
+                        client.insert_event_raw(&target_id, &payload).await?;
+                        if !cli.quiet { println!("  copied: {summary} ({start})"); }
+                        copied += 1;
+                    }
+                }
+
+                if !cli.quiet {
+                    if args.dry_run {
+                        println!("\nDry run complete. {copied} event(s) would be copied, {skipped} skipped.");
+                    } else {
+                        println!("\nDone. {copied} event(s) copied to '{}', {skipped} skipped.", args.target);
+                    }
+                }
+            }
         },
         Command::MoveEvents(args) => {
             let calendars = client.list_calendars().await?;
@@ -1337,125 +1456,6 @@ async fn main() -> Result<()> {
             println!("\nEvents by month:");
             for (k, v) in &by_month {
                 println!("  {k}: {v}");
-            }
-        }
-        Command::DeleteAllEvents(args) => {
-            let (calendar_id, events) = fetch_events(&client, args.calendar_name.as_deref(), &config).await?;
-            if events.is_empty() {
-                if !cli.quiet { println!("No events found."); }
-                return Ok(());
-            }
-
-            if !cli.quiet {
-                println!("Found {} event(s)", events.len());
-                if !args.all {
-                    println!("  interactive mode: y=delete, n=skip, q=quit");
-                }
-                println!();
-            }
-
-            let mut deleted = 0u32;
-            let mut skipped = 0u32;
-            for event in &events {
-                let summary = event.summary_or_default();
-                let start = event.start_str();
-                let event_id = match &event.id {
-                    Some(id) => id,
-                    None => {
-                        eprintln!("  skipping event with no id: {summary}");
-                        skipped += 1;
-                        continue;
-                    }
-                };
-
-                if !args.all {
-                    let prompt = format!("  Delete '{summary}' ({start})?");
-                    match prompt_yes_no_quit(&prompt)? {
-                        Some(true) => {}
-                        Some(false) => { skipped += 1; continue; }
-                        None => {
-                            if !cli.quiet { println!("\nQuit. {deleted} event(s) deleted, {skipped} skipped."); }
-                            return Ok(());
-                        }
-                    }
-                }
-
-                client.delete_event(&calendar_id, event_id).await?;
-                if !cli.quiet { println!("  deleted: {summary} ({start})"); }
-                deleted += 1;
-            }
-
-            if !cli.quiet {
-                println!("\nDone. {deleted} event(s) deleted, {skipped} skipped.");
-            }
-        }
-        Command::CopyCalendar(args) => {
-            let calendars = client.list_calendars().await?;
-
-            let source_cal = calendars.iter()
-                .find(|c| c.summary.as_deref() == Some(&args.source))
-                .context(format!("no calendar named '{}' found", args.source))?;
-            let source_id = source_cal.id.as_deref().context("source calendar has no id")?.to_string();
-
-            let target_cal = calendars.iter()
-                .find(|c| c.summary.as_deref() == Some(&args.target))
-                .context(format!("no calendar named '{}' found", args.target))?;
-            let target_id = target_cal.id.as_deref().context("target calendar has no id")?.to_string();
-
-            if !cli.quiet { println!("Copying events from '{}' to '{}'\n", args.source, args.target); }
-
-            let events = client.list_all_events(&source_id).await?;
-            if events.is_empty() {
-                if !cli.quiet { println!("No events found in '{}'.", args.source); }
-                return Ok(());
-            }
-
-            if !cli.quiet { println!("Found {} event(s)\n", events.len()); }
-
-            let mut copied = 0u32;
-            let mut skipped = 0u32;
-            for event in &events {
-                let summary = event.summary_or_default();
-                let start = event.start_str();
-                if event.id.is_none() {
-                    eprintln!("  skipping event with no id: {summary}");
-                    skipped += 1;
-                    continue;
-                }
-
-                if args.dry_run {
-                    if !cli.quiet { println!("  [dry-run] would copy: {summary} ({start})"); }
-                    copied += 1;
-                } else {
-                    let mut payload = json!({ "summary": summary });
-                    if let Some(start) = &event.start {
-                        payload["start"] = serde_json::to_value(start)?;
-                    }
-                    if let Some(end) = &event.end {
-                        payload["end"] = serde_json::to_value(end)?;
-                    }
-                    if let Some(desc) = &event.description {
-                        payload["description"] = json!(desc);
-                    }
-                    if let Some(loc) = &event.location {
-                        payload["location"] = json!(loc);
-                    }
-                    if let Some(props) = &event.extended_properties {
-                        payload["extendedProperties"] = serde_json::to_value(props)?;
-                    }
-
-                    client.insert_event_raw(&target_id, &payload).await?;
-                    if !cli.quiet { println!("  copied: {summary} ({start})"); }
-                    copied += 1;
-                }
-            }
-
-            if !cli.quiet {
-                if args.dry_run {
-                    println!("\nDry run complete. {copied} event(s) would be copied, {skipped} skipped.");
-                } else {
-                    println!("\nDone. {copied} event(s) copied to '{}', {skipped} skipped.", args.target);
-                }
             }
         }
         Command::Auth(_) | Command::Complete { .. } | Command::Defconfig | Command::Version => unreachable!(),
