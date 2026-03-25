@@ -41,6 +41,8 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Print version and build information.
+    Version,
     /// Print the default configuration file.
     Defconfig,
     /// List all calendars accessible to the authenticated user.
@@ -326,6 +328,18 @@ async fn main() -> Result<()> {
 
     if let Command::Complete { shell } = &cli.command {
         clap_complete::generate(*shell, &mut Cli::command(), "rscalendar", &mut std::io::stdout());
+        return Ok(());
+    }
+
+    if let Command::Version = &cli.command {
+        println!("rscalendar {} by {}", env!("CARGO_PKG_VERSION"), env!("CARGO_PKG_AUTHORS"));
+        println!("GIT_DESCRIBE: {}", env!("GIT_DESCRIBE"));
+        println!("GIT_SHA: {}", env!("GIT_SHA"));
+        println!("GIT_BRANCH: {}", env!("GIT_BRANCH"));
+        println!("GIT_DIRTY: {}", env!("GIT_DIRTY"));
+        println!("RUSTC_SEMVER: {}", env!("RUSTC_SEMVER"));
+        println!("RUST_EDITION: {}", env!("RUST_EDITION"));
+        println!("BUILD_TIMESTAMP: {}", env!("BUILD_TIMESTAMP"));
         return Ok(());
     }
 
@@ -1081,7 +1095,7 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Command::Auth(_) | Command::Complete { .. } | Command::Defconfig => unreachable!(),
+        Command::Auth(_) | Command::Complete { .. } | Command::Defconfig | Command::Version => unreachable!(),
     }
 
     Ok(())
