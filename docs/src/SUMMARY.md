@@ -23,3 +23,4 @@
     - [complete](commands/complete.md)
 - [Configuration](configuration.md)
 - [Design Decisions](design-decisions.md)
+- [Release Info](release-info.md)

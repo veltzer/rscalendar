@@ -46,7 +46,7 @@ impl Config {
 
         if let Some(check) = &config.check {
             let properties = config.properties.as_ref();
-            for (_type_name, required_keys) in check {
+            for required_keys in check.values() {
                 for key in required_keys {
                     if !properties.is_some_and(|p| p.contains_key(key)) {
                         eprintln!("Warning: [check] references property '{key}' which is not defined in [properties]");

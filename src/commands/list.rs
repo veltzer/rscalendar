@@ -28,19 +28,19 @@ pub fn parse_filter_date(s: &str) -> Result<chrono::DateTime<chrono::FixedOffset
 
 /// Extract an event's start time as a DateTime for comparison.
 pub fn event_start_to_datetime(edt: &EventDateTime) -> Option<chrono::DateTime<chrono::FixedOffset>> {
-    if let Some(ref dt_str) = edt.date_time {
-        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(dt_str) {
-            return Some(dt);
-        }
+    if let Some(ref dt_str) = edt.date_time
+        && let Ok(dt) = chrono::DateTime::parse_from_rfc3339(dt_str)
+    {
+        return Some(dt);
     }
-    if let Some(ref d_str) = edt.date {
-        if let Ok(nd) = NaiveDate::parse_from_str(d_str, "%Y-%m-%d") {
-            let ndt = nd.and_hms_opt(0, 0, 0).unwrap();
-            return Some(chrono::DateTime::<chrono::FixedOffset>::from_naive_utc_and_offset(
-                ndt,
-                chrono::FixedOffset::east_opt(0).unwrap(),
-            ));
-        }
+    if let Some(ref d_str) = edt.date
+        && let Ok(nd) = NaiveDate::parse_from_str(d_str, "%Y-%m-%d")
+    {
+        let ndt = nd.and_hms_opt(0, 0, 0).unwrap();
+        return Some(chrono::DateTime::<chrono::FixedOffset>::from_naive_utc_and_offset(
+            ndt,
+            chrono::FixedOffset::east_opt(0).unwrap(),
+        ));
     }
     None
 }
@@ -66,25 +66,21 @@ pub async fn cmd_list(client: &GoogleCalendarClient, args: &ListArgs, config: &C
 
     let filtered: Vec<_> = events.iter().filter(|event| {
         // --starts-after filter
-        if let Some(ref after) = starts_after {
-            if let Some(start) = &event.start {
-                let event_dt = event_start_to_datetime(start);
-                if let Some(evt) = event_dt {
-                    if evt <= *after {
-                        return false;
-                    }
-                }
+        if let Some(ref after) = starts_after
+            && let Some(start) = &event.start
+        {
+            let event_dt = event_start_to_datetime(start);
+            if let Some(evt) = event_dt && evt <= *after {
+                return false;
             }
         }
         // --starts-before filter
-        if let Some(ref before) = starts_before {
-            if let Some(start) = &event.start {
-                let event_dt = event_start_to_datetime(start);
-                if let Some(evt) = event_dt {
-                    if evt >= *before {
-                        return false;
-                    }
-                }
+        if let Some(ref before) = starts_before
+            && let Some(start) = &event.start
+        {
+            let event_dt = event_start_to_datetime(start);
+            if let Some(evt) = event_dt && evt >= *before {
+                return false;
             }
         }
         // --search filter

@@ -186,13 +186,13 @@ pub async fn cmd_event_edit(client: &GoogleCalendarClient, args: &EventEditArgs,
             "prop_add" | "prop_change" => {
                 // Extract key name from menu text like "add property 'course'" or "change property 'course'"
                 let key = extract_property_key(item_text);
-                if let Some(props) = properties {
-                    if let Some(values) = props.get(&key) {
-                        let prompt = format!("Select value for '{key}'");
-                        if let Some(value) = prompt_select(&prompt, values)? {
-                            current_props.insert(key, value);
-                            props_changed = true;
-                        }
+                if let Some(props) = properties
+                    && let Some(values) = props.get(&key)
+                {
+                    let prompt = format!("Select value for '{key}'");
+                    if let Some(value) = prompt_select(&prompt, values)? {
+                        current_props.insert(key, value);
+                        props_changed = true;
                     }
                 }
             }
@@ -228,10 +228,10 @@ pub async fn cmd_event_edit(client: &GoogleCalendarClient, args: &EventEditArgs,
 
 fn extract_property_key(menu_text: &str) -> String {
     // Extract key from text like "add property 'course'" or "change property 'type'"
-    if let Some(start) = menu_text.find('\'') {
-        if let Some(end) = menu_text[start+1..].find('\'') {
-            return menu_text[start+1..start+1+end].to_string();
-        }
+    if let Some(start) = menu_text.find('\'')
+        && let Some(end) = menu_text[start+1..].find('\'')
+    {
+        return menu_text[start+1..start+1+end].to_string();
     }
     String::new()
 }

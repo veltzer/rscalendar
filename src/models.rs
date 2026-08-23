@@ -85,10 +85,10 @@ impl CalendarEvent {
         if let Some(html_link) = &self.html_link {
             obj.insert("link".to_string(), json!(html_link));
         }
-        if let Some(props) = &self.extended_properties {
-            if let Some(shared) = &props.shared {
-                obj.insert("properties".to_string(), json!(shared));
-            }
+        if let Some(props) = &self.extended_properties
+            && let Some(shared) = &props.shared
+        {
+            obj.insert("properties".to_string(), json!(shared));
         }
         Value::Object(obj)
     }
@@ -153,14 +153,13 @@ pub fn print_event(event: &CalendarEvent, show_builtin: bool, json_output: bool)
         println!("link: {html_link}{bi}");
     }
 
-    if let Some(props) = &event.extended_properties {
-        if let Some(shared) = &props.shared {
-            if !shared.is_empty() {
-                println!("---");
-                for (key, value) in shared {
-                    println!("{key}: {value}");
-                }
-            }
+    if let Some(props) = &event.extended_properties
+        && let Some(shared) = &props.shared
+        && !shared.is_empty()
+    {
+        println!("---");
+        for (key, value) in shared {
+            println!("{key}: {value}");
         }
     }
 
