@@ -1,33 +1,49 @@
 use anyhow::{Context, Result, bail};
 
-use crate::cli::{CalendarNameArgs, OutputOptions, PropertiesAddArgs, PropertiesDeleteArgs, PropertiesRenameArgs, PropertiesSetValueArgs};
+use crate::cli::{
+    CalendarNameArgs, OutputOptions, PropertiesAddArgs, PropertiesDeleteArgs, PropertiesRenameArgs,
+    PropertiesSetValueArgs,
+};
 use crate::client::GoogleCalendarClient;
 use crate::config::Config;
 use crate::fetch_events;
 use crate::helpers::{prompt_select, prompt_yes_no_quit};
 
-pub async fn cmd_properties_add(client: &GoogleCalendarClient, args: &PropertiesAddArgs, config: &Config, out: &OutputOptions) -> Result<()> {
+pub async fn cmd_properties_add(
+    client: &GoogleCalendarClient,
+    args: &PropertiesAddArgs,
+    config: &Config,
+    out: &OutputOptions,
+) -> Result<()> {
     if args.key.is_some() != args.value.is_some() {
         bail!("--key and --value must be used together");
     }
 
-    let properties = config.properties.as_ref()
+    let properties = config
+        .properties
+        .as_ref()
         .context("no [properties] section in config.toml")?;
     if properties.is_empty() {
         bail!("no properties defined in [properties] section of config.toml");
     }
 
     if let (Some(key), Some(value)) = (&args.key, &args.value) {
-        let allowed = properties.get(key)
-            .with_context(|| format!("key '{key}' is not defined in [properties] in config.toml"))?;
+        let allowed = properties.get(key).with_context(|| {
+            format!("key '{key}' is not defined in [properties] in config.toml")
+        })?;
         if !allowed.contains(value) {
-            bail!("value '{value}' is not allowed for key '{key}'. Allowed: {}", allowed.join(", "));
+            bail!(
+                "value '{value}' is not allowed for key '{key}'. Allowed: {}",
+                allowed.join(", ")
+            );
         }
     }
 
     let (calendar_id, events) = fetch_events(client, args.calendar_name.as_deref(), config).await?;
     if events.is_empty() {
-        if !out.quiet { println!("No events found."); }
+        if !out.quiet {
+            println!("No events found.");
+        }
         return Ok(());
     }
 
@@ -37,7 +53,9 @@ pub async fn cmd_properties_add(client: &GoogleCalendarClient, args: &Properties
         keys
     };
 
-    if !out.quiet { println!("Adding properties to {} event(s)\n", events.len()); }
+    if !out.quiet {
+        println!("Adding properties to {} event(s)\n", events.len());
+    }
 
     let mut updated = 0u32;
     let mut skipped = 0u32;
@@ -47,7 +65,10 @@ pub async fn cmd_properties_add(client: &GoogleCalendarClient, args: &Properties
         let start = event.start_str();
         let event_id = match &event.id {
             Some(id) => id,
-            None => { skipped_no_id += 1; continue; }
+            None => {
+                skipped_no_id += 1;
+                continue;
+            }
         };
 
         let existing = event.shared_properties();
@@ -62,9 +83,14 @@ pub async fn cmd_properties_add(client: &GoogleCalendarClient, args: &Properties
                 let prompt = format!("Set {key}={value} on '{summary}' ({start})?");
                 match prompt_yes_no_quit(&prompt)? {
                     Some(true) => {}
-                    Some(false) => { skipped += 1; continue; }
+                    Some(false) => {
+                        skipped += 1;
+                        continue;
+                    }
                     None => {
-                        if !out.quiet { println!("\nQuit. {updated} updated, {skipped} skipped."); }
+                        if !out.quiet {
+                            println!("\nQuit. {updated} updated, {skipped} skipped.");
+                        }
                         return Ok(());
                     }
                 }
@@ -72,8 +98,12 @@ pub async fn cmd_properties_add(client: &GoogleCalendarClient, args: &Properties
 
             let mut new_props = existing;
             new_props.insert(key.clone(), value.clone());
-            client.patch_event_properties(&calendar_id, event_id, &new_props).await?;
-            if !out.quiet { println!("set on: {summary} ({start})"); }
+            client
+                .patch_event_properties(&calendar_id, event_id, &new_props)
+                .await?;
+            if !out.quiet {
+                println!("set on: {summary} ({start})");
+            }
             updated += 1;
         } else {
             eprintln!("Event: {summary} ({start})");
@@ -99,7 +129,9 @@ pub async fn cmd_properties_add(client: &GoogleCalendarClient, args: &Properties
             }
 
             if changed {
-                client.patch_event_properties(&calendar_id, event_id, &new_props).await?;
+                client
+                    .patch_event_properties(&calendar_id, event_id, &new_props)
+                    .await?;
                 eprintln!("updated\n");
                 updated += 1;
             } else {
@@ -112,13 +144,22 @@ pub async fn cmd_properties_add(client: &GoogleCalendarClient, args: &Properties
     if skipped_no_id > 0 {
         eprintln!("Warning: skipped {skipped_no_id} event(s) with no ID");
     }
-    if !out.quiet { println!("Done. {updated} updated, {skipped} skipped."); }
+    if !out.quiet {
+        println!("Done. {updated} updated, {skipped} skipped.");
+    }
 
     Ok(())
 }
 
-pub async fn cmd_properties_check(client: &GoogleCalendarClient, args: &CalendarNameArgs, config: &Config, out: &OutputOptions) -> Result<()> {
-    let properties = config.properties.as_ref()
+pub async fn cmd_properties_check(
+    client: &GoogleCalendarClient,
+    args: &CalendarNameArgs,
+    config: &Config,
+    out: &OutputOptions,
+) -> Result<()> {
+    let properties = config
+        .properties
+        .as_ref()
         .context("no [properties] section in config.toml")?;
     if properties.is_empty() {
         bail!("no properties defined in [properties] section of config.toml");
@@ -126,7 +167,9 @@ pub async fn cmd_properties_check(client: &GoogleCalendarClient, args: &Calendar
 
     let (_, events) = fetch_events(client, args.calendar_name.as_deref(), config).await?;
     if events.is_empty() {
-        if !out.quiet { println!("No events found."); }
+        if !out.quiet {
+            println!("No events found.");
+        }
         return Ok(());
     }
 
@@ -134,7 +177,10 @@ pub async fn cmd_properties_check(client: &GoogleCalendarClient, args: &Calendar
     for event in &events {
         let summary = event.summary_or_default();
         let start = event.start_str();
-        let shared = event.extended_properties.as_ref().and_then(|p| p.shared.as_ref());
+        let shared = event
+            .extended_properties
+            .as_ref()
+            .and_then(|p| p.shared.as_ref());
 
         let mut event_issues: Vec<String> = Vec::new();
 
@@ -174,17 +220,27 @@ pub async fn cmd_properties_check(client: &GoogleCalendarClient, args: &Calendar
         if issues == 0 {
             println!("All {} event(s) have valid properties.", events.len());
         } else {
-            println!("\n{issues} issue(s) found across {} event(s).", events.len());
+            println!(
+                "\n{issues} issue(s) found across {} event(s).",
+                events.len()
+            );
         }
     }
 
     Ok(())
 }
 
-pub async fn cmd_properties_delete(client: &GoogleCalendarClient, args: &PropertiesDeleteArgs, config: &Config, out: &OutputOptions) -> Result<()> {
+pub async fn cmd_properties_delete(
+    client: &GoogleCalendarClient,
+    args: &PropertiesDeleteArgs,
+    config: &Config,
+    out: &OutputOptions,
+) -> Result<()> {
     let (calendar_id, events) = fetch_events(client, args.calendar_name.as_deref(), config).await?;
     if events.is_empty() {
-        if !out.quiet { println!("No events found."); }
+        if !out.quiet {
+            println!("No events found.");
+        }
         return Ok(());
     }
 
@@ -196,7 +252,10 @@ pub async fn cmd_properties_delete(client: &GoogleCalendarClient, args: &Propert
         let start = event.start_str();
         let event_id = match &event.id {
             Some(id) => id,
-            None => { skipped_no_id += 1; continue; }
+            None => {
+                skipped_no_id += 1;
+                continue;
+            }
         };
 
         let existing = event.shared_properties();
@@ -207,34 +266,55 @@ pub async fn cmd_properties_delete(client: &GoogleCalendarClient, args: &Propert
 
         if !args.all {
             let current_value = &existing[&args.key];
-            let prompt = format!("Delete {}={current_value} from '{summary}' ({start})?", args.key);
+            let prompt = format!(
+                "Delete {}={current_value} from '{summary}' ({start})?",
+                args.key
+            );
             match prompt_yes_no_quit(&prompt)? {
                 Some(true) => {}
-                Some(false) => { skipped += 1; continue; }
+                Some(false) => {
+                    skipped += 1;
+                    continue;
+                }
                 None => {
-                    if !out.quiet { println!("\nQuit. {updated} deleted, {skipped} skipped."); }
+                    if !out.quiet {
+                        println!("\nQuit. {updated} deleted, {skipped} skipped.");
+                    }
                     return Ok(());
                 }
             }
         }
 
-        client.delete_property(&calendar_id, event_id, &args.key).await?;
-        if !out.quiet { println!("deleted from: {summary} ({start})"); }
+        client
+            .delete_property(&calendar_id, event_id, &args.key)
+            .await?;
+        if !out.quiet {
+            println!("deleted from: {summary} ({start})");
+        }
         updated += 1;
     }
 
     if skipped_no_id > 0 {
         eprintln!("Warning: skipped {skipped_no_id} event(s) with no ID");
     }
-    if !out.quiet { println!("\nDone. {updated} deleted, {skipped} skipped."); }
+    if !out.quiet {
+        println!("\nDone. {updated} deleted, {skipped} skipped.");
+    }
 
     Ok(())
 }
 
-pub async fn cmd_properties_rename(client: &GoogleCalendarClient, args: &PropertiesRenameArgs, config: &Config, out: &OutputOptions) -> Result<()> {
+pub async fn cmd_properties_rename(
+    client: &GoogleCalendarClient,
+    args: &PropertiesRenameArgs,
+    config: &Config,
+    out: &OutputOptions,
+) -> Result<()> {
     let (calendar_id, events) = fetch_events(client, args.calendar_name.as_deref(), config).await?;
     if events.is_empty() {
-        if !out.quiet { println!("No events found."); }
+        if !out.quiet {
+            println!("No events found.");
+        }
         return Ok(());
     }
 
@@ -246,13 +326,19 @@ pub async fn cmd_properties_rename(client: &GoogleCalendarClient, args: &Propert
         let start = event.start_str();
         let event_id = match &event.id {
             Some(id) => id,
-            None => { skipped_no_id += 1; continue; }
+            None => {
+                skipped_no_id += 1;
+                continue;
+            }
         };
 
         let mut existing = event.shared_properties();
         let value = match existing.remove(&args.from) {
             Some(v) => v,
-            None => { skipped += 1; continue; }
+            None => {
+                skipped += 1;
+                continue;
+            }
         };
 
         if !args.all {
@@ -262,30 +348,48 @@ pub async fn cmd_properties_rename(client: &GoogleCalendarClient, args: &Propert
             );
             match prompt_yes_no_quit(&prompt)? {
                 Some(true) => {}
-                Some(false) => { skipped += 1; continue; }
+                Some(false) => {
+                    skipped += 1;
+                    continue;
+                }
                 None => {
-                    if !out.quiet { println!("\nQuit. {updated} renamed, {skipped} skipped."); }
+                    if !out.quiet {
+                        println!("\nQuit. {updated} renamed, {skipped} skipped.");
+                    }
                     return Ok(());
                 }
             }
         }
 
         existing.insert(args.to.clone(), value);
-        client.patch_event_properties(&calendar_id, event_id, &existing).await?;
-        if !out.quiet { println!("renamed on: {summary} ({start})"); }
+        client
+            .patch_event_properties(&calendar_id, event_id, &existing)
+            .await?;
+        if !out.quiet {
+            println!("renamed on: {summary} ({start})");
+        }
         updated += 1;
     }
 
     if skipped_no_id > 0 {
         eprintln!("Warning: skipped {skipped_no_id} event(s) with no ID");
     }
-    if !out.quiet { println!("\nDone. {updated} renamed, {skipped} skipped."); }
+    if !out.quiet {
+        println!("\nDone. {updated} renamed, {skipped} skipped.");
+    }
 
     Ok(())
 }
 
-pub async fn cmd_properties_edit(client: &GoogleCalendarClient, args: &CalendarNameArgs, config: &Config, out: &OutputOptions) -> Result<()> {
-    let properties = config.properties.as_ref()
+pub async fn cmd_properties_edit(
+    client: &GoogleCalendarClient,
+    args: &CalendarNameArgs,
+    config: &Config,
+    out: &OutputOptions,
+) -> Result<()> {
+    let properties = config
+        .properties
+        .as_ref()
         .context("no [properties] section in config.toml")?;
     if properties.is_empty() {
         bail!("no properties defined in [properties] section of config.toml");
@@ -293,7 +397,9 @@ pub async fn cmd_properties_edit(client: &GoogleCalendarClient, args: &CalendarN
 
     let (calendar_id, events) = fetch_events(client, args.calendar_name.as_deref(), config).await?;
     if events.is_empty() {
-        if !out.quiet { println!("No events found."); }
+        if !out.quiet {
+            println!("No events found.");
+        }
         return Ok(());
     }
 
@@ -311,7 +417,10 @@ pub async fn cmd_properties_edit(client: &GoogleCalendarClient, args: &CalendarN
         let end = event.end_str();
         let event_id = match &event.id {
             Some(id) => id,
-            None => { skipped_no_id += 1; continue; }
+            None => {
+                skipped_no_id += 1;
+                continue;
+            }
         };
 
         let mut current = event.shared_properties();
@@ -374,11 +483,20 @@ pub async fn cmd_properties_edit(client: &GoogleCalendarClient, args: &CalendarN
             if selection == menu_items.len() - 1 {
                 // quit
                 if changed {
-                    client.patch_event_properties_with_deletes(&calendar_id, event_id, &current, &deleted_keys).await?;
+                    client
+                        .patch_event_properties_with_deletes(
+                            &calendar_id,
+                            event_id,
+                            &current,
+                            &deleted_keys,
+                        )
+                        .await?;
                     updated += 1;
                     eprintln!("saved.");
                 }
-                if !out.quiet { println!("\nQuit. {updated} event(s) updated."); }
+                if !out.quiet {
+                    println!("\nQuit. {updated} event(s) updated.");
+                }
                 return Ok(());
             }
 
@@ -403,7 +521,14 @@ pub async fn cmd_properties_edit(client: &GoogleCalendarClient, args: &CalendarN
         }
 
         if changed {
-            client.patch_event_properties_with_deletes(&calendar_id, event_id, &current, &deleted_keys).await?;
+            client
+                .patch_event_properties_with_deletes(
+                    &calendar_id,
+                    event_id,
+                    &current,
+                    &deleted_keys,
+                )
+                .await?;
             eprintln!("saved.");
             updated += 1;
         }
@@ -412,15 +537,24 @@ pub async fn cmd_properties_edit(client: &GoogleCalendarClient, args: &CalendarN
     if skipped_no_id > 0 {
         eprintln!("Warning: skipped {skipped_no_id} event(s) with no ID");
     }
-    if !out.quiet { println!("\nDone. {updated} event(s) updated."); }
+    if !out.quiet {
+        println!("\nDone. {updated} event(s) updated.");
+    }
 
     Ok(())
 }
 
-pub async fn cmd_properties_set_value(client: &GoogleCalendarClient, args: &PropertiesSetValueArgs, config: &Config, out: &OutputOptions) -> Result<()> {
+pub async fn cmd_properties_set_value(
+    client: &GoogleCalendarClient,
+    args: &PropertiesSetValueArgs,
+    config: &Config,
+    out: &OutputOptions,
+) -> Result<()> {
     let (calendar_id, events) = fetch_events(client, args.calendar_name.as_deref(), config).await?;
     if events.is_empty() {
-        if !out.quiet { println!("No events found."); }
+        if !out.quiet {
+            println!("No events found.");
+        }
         return Ok(());
     }
 
@@ -432,13 +566,19 @@ pub async fn cmd_properties_set_value(client: &GoogleCalendarClient, args: &Prop
         let start = event.start_str();
         let event_id = match &event.id {
             Some(id) => id,
-            None => { skipped_no_id += 1; continue; }
+            None => {
+                skipped_no_id += 1;
+                continue;
+            }
         };
 
         let existing = event.shared_properties();
         match existing.get(&args.key) {
             Some(v) if v == &args.from => {}
-            _ => { skipped += 1; continue; }
+            _ => {
+                skipped += 1;
+                continue;
+            }
         }
 
         if !args.all {
@@ -448,9 +588,14 @@ pub async fn cmd_properties_set_value(client: &GoogleCalendarClient, args: &Prop
             );
             match prompt_yes_no_quit(&prompt)? {
                 Some(true) => {}
-                Some(false) => { skipped += 1; continue; }
+                Some(false) => {
+                    skipped += 1;
+                    continue;
+                }
                 None => {
-                    if !out.quiet { println!("\nQuit. {updated} changed, {skipped} skipped."); }
+                    if !out.quiet {
+                        println!("\nQuit. {updated} changed, {skipped} skipped.");
+                    }
                     return Ok(());
                 }
             }
@@ -458,15 +603,21 @@ pub async fn cmd_properties_set_value(client: &GoogleCalendarClient, args: &Prop
 
         let mut new_props = existing;
         new_props.insert(args.key.clone(), args.to.clone());
-        client.patch_event_properties(&calendar_id, event_id, &new_props).await?;
-        if !out.quiet { println!("changed on: {summary} ({start})"); }
+        client
+            .patch_event_properties(&calendar_id, event_id, &new_props)
+            .await?;
+        if !out.quiet {
+            println!("changed on: {summary} ({start})");
+        }
         updated += 1;
     }
 
     if skipped_no_id > 0 {
         eprintln!("Warning: skipped {skipped_no_id} event(s) with no ID");
     }
-    if !out.quiet { println!("\nDone. {updated} changed, {skipped} skipped."); }
+    if !out.quiet {
+        println!("\nDone. {updated} changed, {skipped} skipped.");
+    }
 
     Ok(())
 }

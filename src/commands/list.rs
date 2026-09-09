@@ -20,14 +20,18 @@ pub fn parse_filter_date(s: &str) -> Result<chrono::DateTime<chrono::FixedOffset
     let nd = NaiveDate::parse_from_str(s, "%Y-%m-%d")
         .with_context(|| format!("cannot parse '{s}' as RFC3339 or YYYY-MM-DD"))?;
     let ndt = nd.and_hms_opt(0, 0, 0).unwrap();
-    Ok(chrono::DateTime::<chrono::FixedOffset>::from_naive_utc_and_offset(
-        ndt,
-        chrono::FixedOffset::east_opt(0).unwrap(),
-    ))
+    Ok(
+        chrono::DateTime::<chrono::FixedOffset>::from_naive_utc_and_offset(
+            ndt,
+            chrono::FixedOffset::east_opt(0).unwrap(),
+        ),
+    )
 }
 
 /// Extract an event's start time as a DateTime for comparison.
-pub fn event_start_to_datetime(edt: &EventDateTime) -> Option<chrono::DateTime<chrono::FixedOffset>> {
+pub fn event_start_to_datetime(
+    edt: &EventDateTime,
+) -> Option<chrono::DateTime<chrono::FixedOffset>> {
     if let Some(ref dt_str) = edt.date_time
         && let Ok(dt) = chrono::DateTime::parse_from_rfc3339(dt_str)
     {
@@ -37,24 +41,39 @@ pub fn event_start_to_datetime(edt: &EventDateTime) -> Option<chrono::DateTime<c
         && let Ok(nd) = NaiveDate::parse_from_str(d_str, "%Y-%m-%d")
     {
         let ndt = nd.and_hms_opt(0, 0, 0).unwrap();
-        return Some(chrono::DateTime::<chrono::FixedOffset>::from_naive_utc_and_offset(
-            ndt,
-            chrono::FixedOffset::east_opt(0).unwrap(),
-        ));
+        return Some(
+            chrono::DateTime::<chrono::FixedOffset>::from_naive_utc_and_offset(
+                ndt,
+                chrono::FixedOffset::east_opt(0).unwrap(),
+            ),
+        );
     }
     None
 }
 
 // --- List command handler ---
 
-pub async fn cmd_list(client: &GoogleCalendarClient, args: &ListArgs, config: &Config, out: &OutputOptions) -> Result<()> {
+pub async fn cmd_list(
+    client: &GoogleCalendarClient,
+    args: &ListArgs,
+    config: &Config,
+    out: &OutputOptions,
+) -> Result<()> {
     let (_, events) = fetch_events(client, args.calendar_name.as_deref(), config).await?;
 
     // Parse filter dates once
-    let starts_after = args.starts_after.as_deref().map(parse_filter_date)
-        .transpose().context("invalid --starts-after date")?;
-    let starts_before = args.starts_before.as_deref().map(parse_filter_date)
-        .transpose().context("invalid --starts-before date")?;
+    let starts_after = args
+        .starts_after
+        .as_deref()
+        .map(parse_filter_date)
+        .transpose()
+        .context("invalid --starts-after date")?;
+    let starts_before = args
+        .starts_before
+        .as_deref()
+        .map(parse_filter_date)
+        .transpose()
+        .context("invalid --starts-before date")?;
     let search_lower = args.search.as_ref().map(|s| s.to_lowercase());
     let has_property = args.has_property.as_deref().map(|s| {
         if let Some((k, v)) = s.split_once('=') {
@@ -64,85 +83,114 @@ pub async fn cmd_list(client: &GoogleCalendarClient, args: &ListArgs, config: &C
         }
     });
 
-    let filtered: Vec<_> = events.iter().filter(|event| {
-        // --starts-after filter
-        if let Some(ref after) = starts_after
-            && let Some(start) = &event.start
-        {
-            let event_dt = event_start_to_datetime(start);
-            if let Some(evt) = event_dt && evt <= *after {
-                return false;
-            }
-        }
-        // --starts-before filter
-        if let Some(ref before) = starts_before
-            && let Some(start) = &event.start
-        {
-            let event_dt = event_start_to_datetime(start);
-            if let Some(evt) = event_dt && evt >= *before {
-                return false;
-            }
-        }
-        // --search filter
-        if let Some(ref pattern) = search_lower {
-            let summary_match = event.summary.as_ref()
-                .is_some_and(|s| s.to_lowercase().contains(pattern));
-            let desc_match = event.description.as_ref()
-                .is_some_and(|d| d.to_lowercase().contains(pattern));
-            if !summary_match && !desc_match {
-                return false;
-            }
-        }
-        // --has-property filter
-        if let Some((ref key, ref val)) = has_property {
-            let shared = event.extended_properties.as_ref()
-                .and_then(|p| p.shared.as_ref());
-            match val {
-                Some(expected) => {
-                    if !shared.is_some_and(|s| s.get(key).is_some_and(|v| v == expected)) {
-                        return false;
-                    }
-                }
-                None => {
-                    if !shared.is_some_and(|s| s.contains_key(key)) {
-                        return false;
-                    }
+    let filtered: Vec<_> = events
+        .iter()
+        .filter(|event| {
+            // --starts-after filter
+            if let Some(ref after) = starts_after
+                && let Some(start) = &event.start
+            {
+                let event_dt = event_start_to_datetime(start);
+                if let Some(evt) = event_dt
+                    && evt <= *after
+                {
+                    return false;
                 }
             }
-        }
-        true
-    }).collect();
+            // --starts-before filter
+            if let Some(ref before) = starts_before
+                && let Some(start) = &event.start
+            {
+                let event_dt = event_start_to_datetime(start);
+                if let Some(evt) = event_dt
+                    && evt >= *before
+                {
+                    return false;
+                }
+            }
+            // --search filter
+            if let Some(ref pattern) = search_lower {
+                let summary_match = event
+                    .summary
+                    .as_ref()
+                    .is_some_and(|s| s.to_lowercase().contains(pattern));
+                let desc_match = event
+                    .description
+                    .as_ref()
+                    .is_some_and(|d| d.to_lowercase().contains(pattern));
+                if !summary_match && !desc_match {
+                    return false;
+                }
+            }
+            // --has-property filter
+            if let Some((ref key, ref val)) = has_property {
+                let shared = event
+                    .extended_properties
+                    .as_ref()
+                    .and_then(|p| p.shared.as_ref());
+                match val {
+                    Some(expected) => {
+                        if !shared.is_some_and(|s| s.get(key).is_some_and(|v| v == expected)) {
+                            return false;
+                        }
+                    }
+                    None => {
+                        if !shared.is_some_and(|s| s.contains_key(key)) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            true
+        })
+        .collect();
 
     if args.count {
         println!("{}", filtered.len());
     } else if filtered.is_empty() {
-        if !out.quiet { println!("No events found."); }
+        if !out.quiet {
+            println!("No events found.");
+        }
     } else {
         match args.format {
             ListFormat::Table => {
-                println!("{:<30} {:<12} {:<12} {:<15} {:<15}",
-                    "SUMMARY", "START", "END", "TYPE", "CLIENT");
+                println!(
+                    "{:<30} {:<12} {:<12} {:<15} {:<15}",
+                    "SUMMARY", "START", "END", "TYPE", "CLIENT"
+                );
                 println!("{}", "-".repeat(84));
                 for event in &filtered {
                     let summary = event.summary_or_default();
                     let start = event.start_str();
                     let end = event.end_str();
-                    let shared = event.extended_properties.as_ref()
+                    let shared = event
+                        .extended_properties
+                        .as_ref()
                         .and_then(|p| p.shared.as_ref());
-                    let type_val = shared.and_then(|s| s.get("type"))
-                        .map(|s| s.as_str()).unwrap_or("");
-                    let client_val = shared.and_then(|s| s.get("client"))
-                        .map(|s| s.as_str()).unwrap_or("");
+                    let type_val = shared
+                        .and_then(|s| s.get("type"))
+                        .map(|s| s.as_str())
+                        .unwrap_or("");
+                    let client_val = shared
+                        .and_then(|s| s.get("client"))
+                        .map(|s| s.as_str())
+                        .unwrap_or("");
                     // Truncate long values
                     let trunc = |s: &str, max: usize| -> String {
-                        if s.len() > max { format!("{}...", &s[..max-3]) } else { s.to_string() }
+                        if s.len() > max {
+                            format!("{}...", &s[..max - 3])
+                        } else {
+                            s.to_string()
+                        }
                     };
-                    println!("{:<30} {:<12} {:<12} {:<15} {:<15}",
+                    println!(
+                        "{:<30} {:<12} {:<12} {:<15} {:<15}",
                         trunc(summary, 30),
                         trunc(&start, 12),
                         trunc(&end, 12),
                         trunc(type_val, 15),
-                        trunc(client_val, 15));
+                        trunc(client_val, 15)
+                    );
                 }
             }
             ListFormat::Default => {
@@ -161,7 +209,9 @@ pub async fn cmd_list(client: &GoogleCalendarClient, args: &ListArgs, config: &C
 pub async fn cmd_list_calendars(client: &GoogleCalendarClient, out: &OutputOptions) -> Result<()> {
     let calendars = client.list_calendars().await?;
     if calendars.is_empty() {
-        if !out.quiet { println!("No calendars found."); }
+        if !out.quiet {
+            println!("No calendars found.");
+        }
     } else {
         for cal in &calendars {
             print_calendar(cal, out.json);
@@ -172,7 +222,12 @@ pub async fn cmd_list_calendars(client: &GoogleCalendarClient, out: &OutputOptio
 
 // --- Stats handler ---
 
-pub async fn cmd_stats(client: &GoogleCalendarClient, args: &CalendarNameArgs, config: &Config, _out: &OutputOptions) -> Result<()> {
+pub async fn cmd_stats(
+    client: &GoogleCalendarClient,
+    args: &CalendarNameArgs,
+    config: &Config,
+    _out: &OutputOptions,
+) -> Result<()> {
     let (_, events) = fetch_events(client, args.calendar_name.as_deref(), config).await?;
 
     println!("Total events: {}", events.len());
@@ -182,12 +237,18 @@ pub async fn cmd_stats(client: &GoogleCalendarClient, args: &CalendarNameArgs, c
     let mut by_month: BTreeMap<String, u32> = BTreeMap::new();
 
     for event in &events {
-        let shared = event.extended_properties.as_ref()
+        let shared = event
+            .extended_properties
+            .as_ref()
             .and_then(|p| p.shared.as_ref());
-        let type_val = shared.and_then(|s| s.get("type"))
-            .cloned().unwrap_or_else(|| "(no type)".to_string());
-        let client_val = shared.and_then(|s| s.get("client"))
-            .cloned().unwrap_or_else(|| "(no client)".to_string());
+        let type_val = shared
+            .and_then(|s| s.get("type"))
+            .cloned()
+            .unwrap_or_else(|| "(no type)".to_string());
+        let client_val = shared
+            .and_then(|s| s.get("client"))
+            .cloned()
+            .unwrap_or_else(|| "(no client)".to_string());
 
         *by_type.entry(type_val).or_insert(0) += 1;
         *by_client.entry(client_val).or_insert(0) += 1;

@@ -34,12 +34,21 @@ async fn main() -> Result<()> {
     let config = Config::load();
 
     if let Command::Complete { shell } = &cli.command {
-        clap_complete::generate(*shell, &mut Cli::command(), "rscalendar", &mut std::io::stdout());
+        clap_complete::generate(
+            *shell,
+            &mut Cli::command(),
+            "rscalendar",
+            &mut std::io::stdout(),
+        );
         return Ok(());
     }
 
     if let Command::Version = &cli.command {
-        println!("rscalendar {} by {}", env!("CARGO_PKG_VERSION"), env!("CARGO_PKG_AUTHORS"));
+        println!(
+            "rscalendar {} by {}",
+            env!("CARGO_PKG_VERSION"),
+            env!("CARGO_PKG_AUTHORS")
+        );
         println!("GIT_DESCRIBE: {}", env!("GIT_DESCRIBE"));
         println!("GIT_SHA: {}", env!("GIT_SHA"));
         println!("GIT_BRANCH: {}", env!("GIT_BRANCH"));
@@ -127,7 +136,8 @@ async fn main() -> Result<()> {
                 commands::properties::cmd_properties_edit(&client, &args, &config, &out).await?;
             }
             PropertiesAction::SetValue(args) => {
-                commands::properties::cmd_properties_set_value(&client, &args, &config, &out).await?;
+                commands::properties::cmd_properties_set_value(&client, &args, &config, &out)
+                    .await?;
             }
         },
         Command::Calendar { action } => match action {
@@ -138,7 +148,8 @@ async fn main() -> Result<()> {
                 commands::calendar::cmd_calendar_delete(&client, &name, &config, &out).await?;
             }
             CalendarAction::Rename { name, new_name } => {
-                commands::calendar::cmd_calendar_rename(&client, &name, &new_name, &config, &out).await?;
+                commands::calendar::cmd_calendar_rename(&client, &name, &new_name, &config, &out)
+                    .await?;
             }
             CalendarAction::Clear(args) => {
                 commands::calendar::cmd_calendar_clear(&client, &args, &config, &out).await?;
@@ -153,7 +164,9 @@ async fn main() -> Result<()> {
         Command::Stats(args) => {
             commands::list::cmd_stats(&client, &args, &config, &out).await?;
         }
-        Command::Auth(_) | Command::Complete { .. } | Command::Defconfig | Command::Version => unreachable!(),
+        Command::Auth(_) | Command::Complete { .. } | Command::Defconfig | Command::Version => {
+            unreachable!()
+        }
     }
 
     Ok(())

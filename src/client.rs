@@ -47,7 +47,10 @@ impl GoogleCalendarClient {
             .await
             .context("failed to obtain access token; try running 'rscalendar auth' again")?;
 
-        let access_token = token.token().context("token has no access_token field")?.to_string();
+        let access_token = token
+            .token()
+            .context("token has no access_token field")?
+            .to_string();
 
         Ok(Self {
             http: Client::new(),
@@ -76,7 +79,10 @@ impl GoogleCalendarClient {
                     let status = resp.status().as_u16();
                     if TRANSIENT_CODES.contains(&status) && attempt < MAX_RETRIES {
                         let delay = Duration::from_secs(1 << attempt);
-                        eprintln!("Transient error (HTTP {status}), retrying in {}s...", delay.as_secs());
+                        eprintln!(
+                            "Transient error (HTTP {status}), retrying in {}s...",
+                            delay.as_secs()
+                        );
                         sleep(delay).await;
                         attempt += 1;
                         continue;
@@ -104,9 +110,14 @@ impl GoogleCalendarClient {
             .await
             .context("failed to create calendar")?;
         let response = response.error_for_status().map_err(api_error)?;
-        let calendar: Value = response.json().await.context("failed to decode created calendar")?;
+        let calendar: Value = response
+            .json()
+            .await
+            .context("failed to decode created calendar")?;
 
-        let cal_id = calendar["id"].as_str().context("created calendar has no id")?;
+        let cal_id = calendar["id"]
+            .as_str()
+            .context("created calendar has no id")?;
         let acl_url = format!("{API_BASE}/calendars/{}/acl", encode(cal_id));
         self.authorized(self.http.post(&acl_url))
             .json(&json!({
@@ -123,8 +134,14 @@ impl GoogleCalendarClient {
     }
 
     pub async fn get_event(&self, calendar_id: &str, event_id: &str) -> Result<CalendarEvent> {
-        let url = format!("{API_BASE}/calendars/{}/events/{}", encode(calendar_id), encode(event_id));
-        let response = self.send_with_retry(|| async { Ok(self.authorized(self.http.get(&url))) }).await?;
+        let url = format!(
+            "{API_BASE}/calendars/{}/events/{}",
+            encode(calendar_id),
+            encode(event_id)
+        );
+        let response = self
+            .send_with_retry(|| async { Ok(self.authorized(self.http.get(&url))) })
+            .await?;
         let response = response.error_for_status().map_err(api_error)?;
         response.json().await.context("failed to decode event")
     }
@@ -137,23 +154,23 @@ impl GoogleCalendarClient {
             let url = format!("{API_BASE}/calendars/{}/events", encode(calendar_id));
             let pt = page_token.clone();
 
-            let response = self.send_with_retry(|| {
-                let url = url.clone();
-                let pt = pt.clone();
-                async move {
-                    let mut request = self
-                        .authorized(self.http.get(&url))
-                        .query(&[
+            let response = self
+                .send_with_retry(|| {
+                    let url = url.clone();
+                    let pt = pt.clone();
+                    async move {
+                        let mut request = self.authorized(self.http.get(&url)).query(&[
                             ("maxResults", "2500"),
                             ("singleEvents", "true"),
                             ("orderBy", "startTime"),
                         ]);
-                    if let Some(token) = &pt {
-                        request = request.query(&[("pageToken", token.as_str())]);
+                        if let Some(token) = &pt {
+                            request = request.query(&[("pageToken", token.as_str())]);
+                        }
+                        Ok(request)
                     }
-                    Ok(request)
-                }
-            }).await
+                })
+                .await
                 .context("failed to call Google Calendar list events API")?;
 
             let response = response.error_for_status().map_err(api_error)?;
@@ -163,8 +180,8 @@ impl GoogleCalendarClient {
                 .context("failed to decode event list response")?;
 
             if let Some(items) = body["items"].as_array() {
-                let events: Vec<CalendarEvent> = serde_json::from_value(json!(items))
-                    .context("failed to deserialize events")?;
+                let events: Vec<CalendarEvent> =
+                    serde_json::from_value(json!(items)).context("failed to deserialize events")?;
                 all_events.extend(events);
             }
 
@@ -177,15 +194,21 @@ impl GoogleCalendarClient {
         Ok(all_events)
     }
 
-    pub async fn insert_event_raw(&self, calendar_id: &str, payload: &Value) -> Result<CalendarEvent> {
+    pub async fn insert_event_raw(
+        &self,
+        calendar_id: &str,
+        payload: &Value,
+    ) -> Result<CalendarEvent> {
         let url = format!("{API_BASE}/calendars/{}/events", encode(calendar_id));
         let payload = payload.clone();
 
-        let response = self.send_with_retry(|| {
-            let url = url.clone();
-            let payload = payload.clone();
-            async move { Ok(self.authorized(self.http.post(&url)).json(&payload)) }
-        }).await
+        let response = self
+            .send_with_retry(|| {
+                let url = url.clone();
+                let payload = payload.clone();
+                async move { Ok(self.authorized(self.http.post(&url)).json(&payload)) }
+            })
+            .await
             .context("failed to insert event")?;
 
         let response = response.error_for_status().map_err(api_error)?;
@@ -212,7 +235,15 @@ impl GoogleCalendarClient {
         Ok(body.items)
     }
 
-    pub async fn create_event(&self, calendar_id: &str, summary: &str, start: &EventDateTime, end: &EventDateTime, description: Option<&str>, location: Option<&str>) -> Result<CalendarEvent> {
+    pub async fn create_event(
+        &self,
+        calendar_id: &str,
+        summary: &str,
+        start: &EventDateTime,
+        end: &EventDateTime,
+        description: Option<&str>,
+        location: Option<&str>,
+    ) -> Result<CalendarEvent> {
         let mut payload = Map::new();
         payload.insert("summary".to_string(), json!(summary));
         payload.insert("start".to_string(), serde_json::to_value(start)?);
@@ -239,12 +270,21 @@ impl GoogleCalendarClient {
             .context("failed to decode created event response")
     }
 
-    pub async fn update_event(&self, calendar_id: &str, event_id: &str, payload: &Map<String, Value>) -> Result<CalendarEvent> {
+    pub async fn update_event(
+        &self,
+        calendar_id: &str,
+        event_id: &str,
+        payload: &Map<String, Value>,
+    ) -> Result<CalendarEvent> {
         if payload.is_empty() {
             bail!("no fields were provided to update");
         }
 
-        let url = format!("{API_BASE}/calendars/{}/events/{}", encode(calendar_id), encode(event_id));
+        let url = format!(
+            "{API_BASE}/calendars/{}/events/{}",
+            encode(calendar_id),
+            encode(event_id)
+        );
         let response = self
             .authorized(self.http.patch(url))
             .json(payload)
@@ -265,14 +305,20 @@ impl GoogleCalendarClient {
         event_id: &str,
         shared: &HashMap<String, String>,
     ) -> Result<CalendarEvent> {
-        let url = format!("{API_BASE}/calendars/{}/events/{}", encode(calendar_id), encode(event_id));
+        let url = format!(
+            "{API_BASE}/calendars/{}/events/{}",
+            encode(calendar_id),
+            encode(event_id)
+        );
         let payload = json!({ "extendedProperties": { "shared": shared } });
 
-        let response = self.send_with_retry(|| {
-            let url = url.clone();
-            let payload = payload.clone();
-            async move { Ok(self.authorized(self.http.patch(&url)).json(&payload)) }
-        }).await
+        let response = self
+            .send_with_retry(|| {
+                let url = url.clone();
+                let payload = payload.clone();
+                async move { Ok(self.authorized(self.http.patch(&url)).json(&payload)) }
+            })
+            .await
             .context("failed to patch event properties")?;
 
         let response = response.error_for_status().map_err(api_error)?;
@@ -282,8 +328,17 @@ impl GoogleCalendarClient {
             .context("failed to decode patched event")
     }
 
-    pub async fn delete_property(&self, calendar_id: &str, event_id: &str, key: &str) -> Result<()> {
-        let url = format!("{API_BASE}/calendars/{}/events/{}", encode(calendar_id), encode(event_id));
+    pub async fn delete_property(
+        &self,
+        calendar_id: &str,
+        event_id: &str,
+        key: &str,
+    ) -> Result<()> {
+        let url = format!(
+            "{API_BASE}/calendars/{}/events/{}",
+            encode(calendar_id),
+            encode(event_id)
+        );
         let mut shared = Map::new();
         shared.insert(key.to_string(), Value::Null);
         let payload = json!({ "extendedProperties": { "shared": shared } });
@@ -314,7 +369,11 @@ impl GoogleCalendarClient {
             patch_shared.insert(k.clone(), Value::Null);
         }
         let payload = json!({ "extendedProperties": { "shared": patch_shared } });
-        let url = format!("{API_BASE}/calendars/{}/events/{}", encode(calendar_id), encode(event_id));
+        let url = format!(
+            "{API_BASE}/calendars/{}/events/{}",
+            encode(calendar_id),
+            encode(event_id)
+        );
 
         self.authorized(self.http.patch(url))
             .json(&payload)
@@ -329,10 +388,12 @@ impl GoogleCalendarClient {
 
     pub async fn delete_calendar(&self, calendar_id: &str) -> Result<()> {
         let url = format!("{API_BASE}/calendars/{}", encode(calendar_id));
-        let response = self.send_with_retry(|| {
-            let url = url.clone();
-            async move { Ok(self.authorized(self.http.delete(&url))) }
-        }).await
+        let response = self
+            .send_with_retry(|| {
+                let url = url.clone();
+                async move { Ok(self.authorized(self.http.delete(&url))) }
+            })
+            .await
             .context("failed to delete calendar")?;
         response.error_for_status().map_err(api_error)?;
         Ok(())
@@ -341,23 +402,31 @@ impl GoogleCalendarClient {
     pub async fn rename_calendar(&self, calendar_id: &str, new_name: &str) -> Result<()> {
         let url = format!("{API_BASE}/calendars/{}", encode(calendar_id));
         let payload = json!({ "summary": new_name });
-        let response = self.send_with_retry(|| {
-            let url = url.clone();
-            let payload = payload.clone();
-            async move { Ok(self.authorized(self.http.patch(&url)).json(&payload)) }
-        }).await
+        let response = self
+            .send_with_retry(|| {
+                let url = url.clone();
+                let payload = payload.clone();
+                async move { Ok(self.authorized(self.http.patch(&url)).json(&payload)) }
+            })
+            .await
             .context("failed to rename calendar")?;
         response.error_for_status().map_err(api_error)?;
         Ok(())
     }
 
     pub async fn delete_event(&self, calendar_id: &str, event_id: &str) -> Result<()> {
-        let url = format!("{API_BASE}/calendars/{}/events/{}", encode(calendar_id), encode(event_id));
+        let url = format!(
+            "{API_BASE}/calendars/{}/events/{}",
+            encode(calendar_id),
+            encode(event_id)
+        );
 
-        let response = self.send_with_retry(|| {
-            let url = url.clone();
-            async move { Ok(self.authorized(self.http.delete(&url))) }
-        }).await
+        let response = self
+            .send_with_retry(|| {
+                let url = url.clone();
+                async move { Ok(self.authorized(self.http.delete(&url))) }
+            })
+            .await
             .context("failed to call Google Calendar delete event API")?;
 
         response.error_for_status().map_err(api_error)?;
@@ -375,9 +444,9 @@ pub fn resolve_calendar_id<'a>(
     name: Option<&str>,
     config: &Config,
 ) -> Result<&'a str> {
-    let name = name
-        .or(config.calendar_name.as_deref())
-        .context("no calendar name specified; use --calendar-name or set calendar_name in config.toml")?;
+    let name = name.or(config.calendar_name.as_deref()).context(
+        "no calendar name specified; use --calendar-name or set calendar_name in config.toml",
+    )?;
     let matches: Vec<&CalendarListEntry> = calendars
         .iter()
         .filter(|c| c.summary.as_deref() == Some(name))
@@ -395,10 +464,7 @@ pub fn resolve_calendar_id<'a>(
             ids.join(", ")
         );
     }
-    matches[0]
-        .id
-        .as_deref()
-        .context("calendar has no id")
+    matches[0].id.as_deref().context("calendar has no id")
 }
 
 fn api_error(error: reqwest::Error) -> anyhow::Error {

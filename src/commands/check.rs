@@ -6,23 +6,36 @@ use crate::config::Config;
 use crate::fetch_events;
 use crate::helpers::{prompt_select, prompt_yes_no_quit};
 
-pub async fn cmd_check(client: &GoogleCalendarClient, args: &CheckArgs, config: &Config, out: &OutputOptions) -> Result<()> {
-    let check_rules = config.check.as_ref()
+pub async fn cmd_check(
+    client: &GoogleCalendarClient,
+    args: &CheckArgs,
+    config: &Config,
+    out: &OutputOptions,
+) -> Result<()> {
+    let check_rules = config
+        .check
+        .as_ref()
         .context("no [check] section in config.toml")?;
     if check_rules.is_empty() {
         bail!("no rules defined in [check] section of config.toml");
     }
 
     let properties = if args.fix {
-        Some(config.properties.as_ref()
-            .context("--fix requires [properties] section in config.toml")?)
+        Some(
+            config
+                .properties
+                .as_ref()
+                .context("--fix requires [properties] section in config.toml")?,
+        )
     } else {
         None
     };
 
     let (calendar_id, events) = fetch_events(client, args.calendar_name.as_deref(), config).await?;
     if events.is_empty() {
-        if !out.quiet { println!("No events found."); }
+        if !out.quiet {
+            println!("No events found.");
+        }
         return Ok(());
     }
 
@@ -32,7 +45,10 @@ pub async fn cmd_check(client: &GoogleCalendarClient, args: &CheckArgs, config: 
     for event in &events {
         let summary = event.summary_or_default();
         let start = event.start_str();
-        let shared = event.extended_properties.as_ref().and_then(|p| p.shared.as_ref());
+        let shared = event
+            .extended_properties
+            .as_ref()
+            .and_then(|p| p.shared.as_ref());
         let event_id = event.id.as_deref();
 
         let event_type = match shared.and_then(|s| s.get("type")) {
@@ -66,7 +82,9 @@ pub async fn cmd_check(client: &GoogleCalendarClient, args: &CheckArgs, config: 
                             }
                         }
 
-                        client.patch_event_properties(&calendar_id, eid, &new_props).await?;
+                        client
+                            .patch_event_properties(&calendar_id, eid, &new_props)
+                            .await?;
                         println!("fixed.");
                         fixed += 1;
                     }
@@ -116,7 +134,9 @@ pub async fn cmd_check(client: &GoogleCalendarClient, args: &CheckArgs, config: 
                                 }
                             }
                         }
-                        client.patch_event_properties(&calendar_id, eid, &new_props).await?;
+                        client
+                            .patch_event_properties(&calendar_id, eid, &new_props)
+                            .await?;
                         println!("fixed.");
                         fixed += 1;
                     }
@@ -136,7 +156,10 @@ pub async fn cmd_check(client: &GoogleCalendarClient, args: &CheckArgs, config: 
         if issues == 0 {
             println!("All {} event(s) pass checks.", events.len());
         } else {
-            println!("\n{issues} issue(s) in {events_with_issues} event(s) out of {}.", events.len());
+            println!(
+                "\n{issues} issue(s) in {events_with_issues} event(s) out of {}.",
+                events.len()
+            );
             if args.fix {
                 println!("{fixed} event(s) fixed.");
             }

@@ -39,7 +39,9 @@ impl Config {
         if let Some(properties) = &config.properties {
             for (key, values) in properties {
                 if values.is_empty() {
-                    eprintln!("Warning: property '{key}' in config.toml has an empty list of allowed values");
+                    eprintln!(
+                        "Warning: property '{key}' in config.toml has an empty list of allowed values"
+                    );
                 }
             }
         }
@@ -49,7 +51,9 @@ impl Config {
             for required_keys in check.values() {
                 for key in required_keys {
                     if !properties.is_some_and(|p| p.contains_key(key)) {
-                        eprintln!("Warning: [check] references property '{key}' which is not defined in [properties]");
+                        eprintln!(
+                            "Warning: [check] references property '{key}' which is not defined in [properties]"
+                        );
                     }
                 }
             }
@@ -64,12 +68,10 @@ impl Config {
 }
 
 pub fn config_dir() -> Result<PathBuf> {
-    let mut dir = dirs::home_dir()
-        .context("Could not determine home directory")?;
+    let mut dir = dirs::home_dir().context("Could not determine home directory")?;
     dir.push(".config");
     dir.push("rscalendar");
-    std::fs::create_dir_all(&dir)
-        .context("Could not create config directory")?;
+    std::fs::create_dir_all(&dir).context("Could not create config directory")?;
     Ok(dir)
 }
 

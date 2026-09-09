@@ -7,18 +7,39 @@ use crate::config::Config;
 use crate::helpers::{build_event_patch_payload, parse_event_time, prompt_select};
 use crate::models::print_event;
 
-pub async fn cmd_event_create(client: &GoogleCalendarClient, args: &UpsertArgs, config: &Config, out: &OutputOptions) -> Result<()> {
+pub async fn cmd_event_create(
+    client: &GoogleCalendarClient,
+    args: &UpsertArgs,
+    config: &Config,
+    out: &OutputOptions,
+) -> Result<()> {
     let calendars = client.list_calendars().await?;
     let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), config)?;
     let start = parse_event_time(&args.start, false)?;
     let end = parse_event_time(&args.end, true)?;
-    let event = client.create_event(calendar_id, &args.summary, &start, &end, args.description.as_deref(), args.location.as_deref()).await?;
-    if !out.quiet { println!("Created event:"); }
+    let event = client
+        .create_event(
+            calendar_id,
+            &args.summary,
+            &start,
+            &end,
+            args.description.as_deref(),
+            args.location.as_deref(),
+        )
+        .await?;
+    if !out.quiet {
+        println!("Created event:");
+    }
     print_event(&event, out.show_builtin, out.json);
     Ok(())
 }
 
-pub async fn cmd_event_update(client: &GoogleCalendarClient, args: &UpdateArgs, config: &Config, out: &OutputOptions) -> Result<()> {
+pub async fn cmd_event_update(
+    client: &GoogleCalendarClient,
+    args: &UpdateArgs,
+    config: &Config,
+    out: &OutputOptions,
+) -> Result<()> {
     let calendars = client.list_calendars().await?;
     let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), config)?;
     let payload = build_event_patch_payload(
@@ -28,21 +49,37 @@ pub async fn cmd_event_update(client: &GoogleCalendarClient, args: &UpdateArgs, 
         args.description.as_deref(),
         args.location.as_deref(),
     )?;
-    let event = client.update_event(calendar_id, &args.event_id, &payload).await?;
-    if !out.quiet { println!("Updated event:"); }
+    let event = client
+        .update_event(calendar_id, &args.event_id, &payload)
+        .await?;
+    if !out.quiet {
+        println!("Updated event:");
+    }
     print_event(&event, out.show_builtin, out.json);
     Ok(())
 }
 
-pub async fn cmd_event_delete(client: &GoogleCalendarClient, args: &DeleteArgs, config: &Config, out: &OutputOptions) -> Result<()> {
+pub async fn cmd_event_delete(
+    client: &GoogleCalendarClient,
+    args: &DeleteArgs,
+    config: &Config,
+    out: &OutputOptions,
+) -> Result<()> {
     let calendars = client.list_calendars().await?;
     let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), config)?;
     client.delete_event(calendar_id, &args.event_id).await?;
-    if !out.quiet { println!("Deleted event '{}'.", args.event_id); }
+    if !out.quiet {
+        println!("Deleted event '{}'.", args.event_id);
+    }
     Ok(())
 }
 
-pub async fn cmd_event_edit(client: &GoogleCalendarClient, args: &EventEditArgs, config: &Config, out: &OutputOptions) -> Result<()> {
+pub async fn cmd_event_edit(
+    client: &GoogleCalendarClient,
+    args: &EventEditArgs,
+    config: &Config,
+    out: &OutputOptions,
+) -> Result<()> {
     let calendars = client.list_calendars().await?;
     let calendar_id = resolve_calendar_id(&calendars, args.calendar_name.as_deref(), config)?;
     let event = client.get_event(calendar_id, &args.event_id).await?;
@@ -56,23 +93,28 @@ pub async fn cmd_event_edit(client: &GoogleCalendarClient, args: &EventEditArgs,
 
     loop {
         // Show current state
-        let summary = changed_fields.get("summary")
+        let summary = changed_fields
+            .get("summary")
             .and_then(|v| v.as_str())
             .unwrap_or(event.summary_or_default());
-        let start = changed_fields.get("start")
+        let start = changed_fields
+            .get("start")
             .and_then(|v| v.get("dateTime").or(v.get("date")))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .unwrap_or_else(|| event.start_str());
-        let end = changed_fields.get("end")
+        let end = changed_fields
+            .get("end")
             .and_then(|v| v.get("dateTime").or(v.get("date")))
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .unwrap_or_else(|| event.end_str());
-        let description = changed_fields.get("description")
+        let description = changed_fields
+            .get("description")
             .and_then(|v| v.as_str())
             .or(event.description.as_deref());
-        let location = changed_fields.get("location")
+        let location = changed_fields
+            .get("location")
             .and_then(|v| v.as_str())
             .or(event.location.as_deref());
 
@@ -103,9 +145,8 @@ pub async fn cmd_event_edit(client: &GoogleCalendarClient, args: &EventEditArgs,
             "edit description".to_string(),
             "edit location".to_string(),
         ];
-        let mut menu_actions: Vec<&str> = vec![
-            "summary", "start", "end", "description", "location",
-        ];
+        let mut menu_actions: Vec<&str> =
+            vec!["summary", "start", "end", "description", "location"];
 
         // Property actions
         if let Some(props) = properties {
@@ -140,7 +181,8 @@ pub async fn cmd_event_edit(client: &GoogleCalendarClient, args: &EventEditArgs,
 
         match action {
             "summary" => {
-                let current = changed_fields.get("summary")
+                let current = changed_fields
+                    .get("summary")
                     .and_then(|v| v.as_str())
                     .unwrap_or(event.summary_or_default());
                 let new_val: String = dialoguer::Input::new()
@@ -205,20 +247,35 @@ pub async fn cmd_event_edit(client: &GoogleCalendarClient, args: &EventEditArgs,
             "save" => {
                 let has_field_changes = !changed_fields.is_empty();
                 if has_field_changes {
-                    client.update_event(calendar_id, &args.event_id, &changed_fields).await?;
+                    client
+                        .update_event(calendar_id, &args.event_id, &changed_fields)
+                        .await?;
                 }
                 if props_changed {
-                    client.patch_event_properties_with_deletes(calendar_id, &args.event_id, &current_props, &deleted_prop_keys).await?;
+                    client
+                        .patch_event_properties_with_deletes(
+                            calendar_id,
+                            &args.event_id,
+                            &current_props,
+                            &deleted_prop_keys,
+                        )
+                        .await?;
                 }
                 if has_field_changes || props_changed {
-                    if !out.quiet { println!("Event saved."); }
+                    if !out.quiet {
+                        println!("Event saved.");
+                    }
                 } else {
-                    if !out.quiet { println!("No changes."); }
+                    if !out.quiet {
+                        println!("No changes.");
+                    }
                 }
                 return Ok(());
             }
             "discard" => {
-                if !out.quiet { println!("Discarded."); }
+                if !out.quiet {
+                    println!("Discarded.");
+                }
                 return Ok(());
             }
             _ => unreachable!(),
@@ -229,9 +286,9 @@ pub async fn cmd_event_edit(client: &GoogleCalendarClient, args: &EventEditArgs,
 fn extract_property_key(menu_text: &str) -> String {
     // Extract key from text like "add property 'course'" or "change property 'type'"
     if let Some(start) = menu_text.find('\'')
-        && let Some(end) = menu_text[start+1..].find('\'')
+        && let Some(end) = menu_text[start + 1..].find('\'')
     {
-        return menu_text[start+1..start+1+end].to_string();
+        return menu_text[start + 1..start + 1 + end].to_string();
     }
     String::new()
 }

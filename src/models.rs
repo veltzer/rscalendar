@@ -190,7 +190,11 @@ pub fn print_calendar(cal: &CalendarListEntry, json_output: bool) {
 
     let id = cal.id.as_deref().unwrap_or("<missing-id>");
     let summary = cal.summary.as_deref().unwrap_or("<untitled>");
-    let primary = if cal.primary.unwrap_or(false) { " (primary)" } else { "" };
+    let primary = if cal.primary.unwrap_or(false) {
+        " (primary)"
+    } else {
+        ""
+    };
     println!("{summary}{primary}");
     println!("id: {id}");
     if let Some(role) = &cal.access_role {

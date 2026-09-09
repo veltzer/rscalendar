@@ -15,9 +15,7 @@ impl yup_oauth2::authenticator_delegate::InstalledFlowDelegate for NoInteraction
         _url: &'a str,
         _need_code: bool,
     ) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'a>> {
-        Box::pin(async move {
-            Err("Not authenticated. Run 'rscalendar auth' first.".to_string())
-        })
+        Box::pin(async move { Err("Not authenticated. Run 'rscalendar auth' first.".to_string()) })
     }
 }
 
