@@ -4,7 +4,7 @@ rscalendar supports an optional TOML config file for setting defaults.
 
 ## File Location
 
-```
+```text
 ~/.config/rscalendar/config.toml
 ```
 

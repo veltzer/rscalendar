@@ -31,7 +31,7 @@ Changes are saved when you press `n` (next) or `q` (quit). If no changes were ma
 
 ## Example Session
 
-```
+```text
 Event: Linux Workshop (2026-04-01T09:00:00+03:00)
   company: AgileSparks
   Actions:
