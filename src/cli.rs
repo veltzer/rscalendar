@@ -368,3 +368,39 @@ pub struct OutputOptions {
     pub json: bool,
     pub quiet: bool,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_auth(args: &[&str]) -> AuthArgs {
+        let argv = [&["rscalendar", "auth"], args].concat();
+        match Cli::parse_from(argv).command {
+            Command::Auth(a) => a,
+            other => panic!("expected auth, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn auth_bare_is_login() {
+        let a = parse_auth(&[]);
+        assert!(a.action.is_none() && !a.no_browser && !a.force);
+    }
+
+    #[test]
+    fn auth_login_flags() {
+        let a = parse_auth(&["--force", "--no-browser"]);
+        assert!(a.action.is_none() && a.no_browser && a.force);
+    }
+
+    #[test]
+    fn auth_check_token() {
+        let a = parse_auth(&["check-token"]);
+        assert!(matches!(a.action, Some(AuthAction::CheckToken)));
+    }
+
+    #[test]
+    fn auth_check_token_rejects_login_flags() {
+        assert!(Cli::try_parse_from(["rscalendar", "auth", "--force", "check-token"]).is_err());
+    }
+}

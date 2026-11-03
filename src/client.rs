@@ -7,7 +7,7 @@ use serde_json::{Map, Value, json};
 use tokio::time::{Duration, sleep};
 use urlencoding::encode;
 
-use crate::auth::NoInteractionDelegate;
+use crate::auth::noninteractive_authenticator;
 use crate::config::{Config, credentials_path, token_cache_path};
 use crate::models::{CalendarEvent, CalendarListEntry, CalendarListResponse, EventDateTime};
 
@@ -28,19 +28,7 @@ impl GoogleCalendarClient {
             std::process::exit(1);
         }
 
-        let secret = yup_oauth2::read_application_secret(credentials_path()?)
-            .await
-            .context("failed to read credentials.json")?;
-
-        let auth = yup_oauth2::InstalledFlowAuthenticator::builder(
-            secret,
-            yup_oauth2::InstalledFlowReturnMethod::HTTPRedirect,
-        )
-        .persist_tokens_to_disk(cache_path)
-        .flow_delegate(Box::new(NoInteractionDelegate))
-        .build()
-        .await
-        .context("failed to build authenticator")?;
+        let auth = noninteractive_authenticator(&credentials_path()?, &cache_path).await?;
 
         let token = auth
             .token(&[CALENDAR_SCOPE])
