@@ -79,3 +79,52 @@ pub async fn cmd_auth(no_browser_flag: bool, force: bool, config: &Config) -> Re
     );
     Ok(())
 }
+
+/// Check that the cached token is usable without any user interaction.
+///
+/// Loads the token cache and asks for an access token with the
+/// non-interactive delegate: a still-valid access token is returned as is, an
+/// expired one is refreshed with the refresh token (which also counts as use
+/// of the OAuth client in Google's inactivity policy). A missing cache or a
+/// rejected refresh token is reported and exits with status 1.
+pub async fn cmd_auth_check_token() -> Result<()> {
+    let cache_path = token_cache_path()?;
+    if !cache_path.exists() {
+        eprintln!(
+            "Token: MISSING ({}). Run 'rscalendar auth'.",
+            cache_path.display()
+        );
+        std::process::exit(1);
+    }
+    let secret = yup_oauth2::read_application_secret(credentials_path()?)
+        .await
+        .context("failed to read credentials.json")?;
+    let auth = yup_oauth2::InstalledFlowAuthenticator::builder(
+        secret,
+        // Interactive, not HTTPRedirect: the redirect flow ignores the
+        // delegate's refusal and waits forever for a browser callback, while
+        // the interactive flow propagates it as an error.
+        yup_oauth2::InstalledFlowReturnMethod::Interactive,
+    )
+    .persist_tokens_to_disk(cache_path)
+    .flow_delegate(Box::new(NoInteractionDelegate))
+    .build()
+    .await
+    .context("failed to build authenticator")?;
+    match auth.token(&[CALENDAR_SCOPE]).await {
+        Ok(token) => {
+            match token.expiration_time() {
+                Some(exp) => println!("Token: VALID (access token expires {exp})"),
+                None => println!("Token: VALID"),
+            }
+            Ok(())
+        }
+        Err(yup_oauth2::Error::UserError(_)) => {
+            eprintln!(
+                "Token: INVALID (could not refresh: refresh token expired or revoked, or Google unreachable). Run 'rscalendar auth --force'."
+            );
+            std::process::exit(1);
+        }
+        Err(e) => Err(e).context("failed to check token"),
+    }
+}

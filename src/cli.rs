@@ -345,13 +345,22 @@ pub struct DeleteArgs {
 }
 
 #[derive(Debug, Args)]
+#[command(args_conflicts_with_subcommands = true)]
 pub struct AuthArgs {
+    #[command(subcommand)]
+    pub action: Option<AuthAction>,
     /// Print the authorization URL instead of opening the browser.
     #[arg(long, default_value_t = false)]
     pub no_browser: bool,
     /// Force re-authentication by removing cached token first.
     #[arg(long, default_value_t = false)]
     pub force: bool,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AuthAction {
+    /// Check whether the cached token is valid, refreshing it if expired (no browser).
+    CheckToken,
 }
 
 pub struct OutputOptions {

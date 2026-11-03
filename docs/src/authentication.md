@@ -35,6 +35,14 @@ Force re-authentication (removes cached token first):
 rscalendar auth --force
 ```
 
+Check whether the cached token still works, without opening a browser
+(refreshes the access token if it has expired; exits 1 if the refresh token
+is missing, expired or revoked):
+
+```bash
+rscalendar auth check-token
+```
+
 ## Scopes
 
 rscalendar requests the `https://www.googleapis.com/auth/calendar` scope, which provides full read/write access to your Google Calendar.

@@ -9,7 +9,7 @@ mod models;
 use anyhow::Result;
 use clap::{CommandFactory, Parser};
 
-use cli::{CalendarAction, Cli, Command, EventAction, OutputOptions, PropertiesAction};
+use cli::{AuthAction, CalendarAction, Cli, Command, EventAction, OutputOptions, PropertiesAction};
 use client::GoogleCalendarClient;
 use config::Config;
 
@@ -84,7 +84,10 @@ async fn main() -> Result<()> {
     }
 
     if let Command::Auth(args) = &cli.command {
-        auth::cmd_auth(args.no_browser, args.force, &config).await?;
+        match args.action {
+            Some(AuthAction::CheckToken) => auth::cmd_auth_check_token().await?,
+            None => auth::cmd_auth(args.no_browser, args.force, &config).await?,
+        }
         return Ok(());
     }
 
