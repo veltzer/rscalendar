@@ -164,13 +164,11 @@ pub async fn cmd_stats(
         *by_client.entry(client_val).or_insert(0) += 1;
 
         if let Some(start) = &event.start {
-            let month_str = if let Some(ref dt_str) = start.date_time {
-                dt_str.get(..7).map(std::string::ToString::to_string)
-            } else if let Some(ref d_str) = start.date {
-                d_str.get(..7).map(std::string::ToString::to_string)
-            } else {
-                None
-            };
+            let month_str = start
+                .date_time
+                .as_ref()
+                .or(start.date.as_ref())
+                .and_then(|s| s.get(..7).map(std::string::ToString::to_string));
             if let Some(m) = month_str {
                 *by_month.entry(m).or_insert(0) += 1;
             }

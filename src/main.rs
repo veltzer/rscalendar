@@ -113,12 +113,12 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    if let Command::Version = &cli.command {
+    if matches!(&cli.command, Command::Version) {
         print_version();
         return Ok(());
     }
 
-    if let Command::Defconfig = &cli.command {
+    if matches!(&cli.command, Command::Defconfig) {
         print_defconfig();
         return Ok(());
     }

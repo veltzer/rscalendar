@@ -70,7 +70,6 @@ pub async fn cmd_move_events(
             if !out.quiet {
                 println!("[dry-run] would move: {summary} ({start})");
             }
-            moved += 1;
         } else {
             let payload = move_payload(event, summary)?;
 
@@ -79,8 +78,8 @@ pub async fn cmd_move_events(
             if !out.quiet {
                 println!("moved: {summary} ({start})");
             }
-            moved += 1;
         }
+        moved += 1;
     }
 
     if !out.quiet {

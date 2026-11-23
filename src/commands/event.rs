@@ -358,7 +358,7 @@ fn effective_text(
 fn effective_time(changed_fields: &Map<String, Value>, key: &str, original: String) -> String {
     changed_fields
         .get(key)
-        .and_then(|v| v.get("dateTime").or(v.get("date")))
+        .and_then(|v| v.get("dateTime").or_else(|| v.get("date")))
         .and_then(Value::as_str)
         .map_or(original, str::to_string)
 }

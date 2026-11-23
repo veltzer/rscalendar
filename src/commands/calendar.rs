@@ -184,7 +184,6 @@ pub async fn cmd_calendar_copy(
             if !out.quiet {
                 println!("[dry-run] would copy: {summary} ({start})");
             }
-            copied += 1;
         } else {
             let mut payload = json!({ "summary": summary });
             if let Some(start) = &event.start {
@@ -207,8 +206,8 @@ pub async fn cmd_calendar_copy(
             if !out.quiet {
                 println!("copied: {summary} ({start})");
             }
-            copied += 1;
         }
+        copied += 1;
     }
 
     if !out.quiet {

@@ -455,9 +455,8 @@ pub fn resolve_calendar_id<'a>(
 }
 
 fn api_error(error: reqwest::Error) -> anyhow::Error {
-    if let Some(status) = error.status() {
-        anyhow::anyhow!("Google Calendar API request failed with status {status}")
-    } else {
-        anyhow::anyhow!(error)
-    }
+    error.status().map_or_else(
+        || anyhow::anyhow!(error),
+        |status| anyhow::anyhow!("Google Calendar API request failed with status {status}"),
+    )
 }
