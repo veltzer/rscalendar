@@ -8,6 +8,7 @@ use crate::client::GoogleCalendarClient;
 use crate::config::Config;
 use crate::fetch_events;
 use crate::helpers::{prompt_select, prompt_yes_no_quit};
+use crate::models::CalendarEvent;
 
 pub async fn cmd_properties_add(
     client: &GoogleCalendarClient,
@@ -15,29 +16,7 @@ pub async fn cmd_properties_add(
     config: &Config,
     out: &OutputOptions,
 ) -> Result<()> {
-    if args.key.is_some() != args.value.is_some() {
-        bail!("--key and --value must be used together");
-    }
-
-    let properties = config
-        .properties
-        .as_ref()
-        .context("no [properties] section in config.toml")?;
-    if properties.is_empty() {
-        bail!("no properties defined in [properties] section of config.toml");
-    }
-
-    if let (Some(key), Some(value)) = (&args.key, &args.value) {
-        let allowed = properties.get(key).with_context(|| {
-            format!("key '{key}' is not defined in [properties] in config.toml")
-        })?;
-        if !allowed.contains(value) {
-            bail!(
-                "value '{value}' is not allowed for key '{key}'. Allowed: {}",
-                allowed.join(", ")
-            );
-        }
-    }
+    let properties = validate_add_args(args, config)?;
 
     let (calendar_id, events) = fetch_events(client, args.calendar_name.as_deref(), config).await?;
     if events.is_empty() {
@@ -47,11 +26,7 @@ pub async fn cmd_properties_add(
         return Ok(());
     }
 
-    let sorted_keys: Vec<&String> = {
-        let mut keys: Vec<_> = properties.keys().collect();
-        keys.sort();
-        keys
-    };
+    let sorted_keys = sorted_property_keys(properties);
 
     if !out.quiet {
         println!("Adding properties to {} event(s)\n", events.len());
@@ -63,12 +38,9 @@ pub async fn cmd_properties_add(
     for event in &events {
         let summary = event.summary_or_default();
         let start = event.start_str();
-        let event_id = match &event.id {
-            Some(id) => id,
-            None => {
-                skipped_no_id += 1;
-                continue;
-            }
+        let Some(event_id) = &event.id else {
+            skipped_no_id += 1;
+            continue;
         };
 
         let existing = event.shared_properties();
@@ -107,26 +79,12 @@ pub async fn cmd_properties_add(
             updated += 1;
         } else {
             eprintln!("Event: {summary} ({start})");
-            if !existing.is_empty() {
-                for (k, v) in &existing {
-                    eprintln!("existing {k}: {v}");
-                }
+            for (k, v) in &existing {
+                eprintln!("existing {k}: {v}");
             }
 
-            let mut new_props = existing.clone();
-            let mut changed = false;
-
-            for key in &sorted_keys {
-                let values = &properties[*key];
-                if existing.contains_key(*key) {
-                    continue;
-                }
-                let prompt = format!("Select {key}:");
-                if let Some(value) = prompt_select(&prompt, values)? {
-                    new_props.insert((*key).clone(), value);
-                    changed = true;
-                }
-            }
+            let (new_props, changed) =
+                prompt_missing_properties(&existing, &sorted_keys, properties)?;
 
             if changed {
                 client
@@ -157,13 +115,7 @@ pub async fn cmd_properties_check(
     config: &Config,
     out: &OutputOptions,
 ) -> Result<()> {
-    let properties = config
-        .properties
-        .as_ref()
-        .context("no [properties] section in config.toml")?;
-    if properties.is_empty() {
-        bail!("no properties defined in [properties] section of config.toml");
-    }
+    let properties = require_properties(config)?;
 
     let (_, events) = fetch_events(client, args.calendar_name.as_deref(), config).await?;
     if events.is_empty() {
@@ -212,7 +164,7 @@ pub async fn cmd_properties_check(
             for issue in &event_issues {
                 println!("- {issue}");
             }
-            issues += event_issues.len() as u32;
+            issues += u32::try_from(event_issues.len()).unwrap_or(u32::MAX);
         }
     }
 
@@ -250,12 +202,9 @@ pub async fn cmd_properties_delete(
     for event in &events {
         let summary = event.summary_or_default();
         let start = event.start_str();
-        let event_id = match &event.id {
-            Some(id) => id,
-            None => {
-                skipped_no_id += 1;
-                continue;
-            }
+        let Some(event_id) = &event.id else {
+            skipped_no_id += 1;
+            continue;
         };
 
         let existing = event.shared_properties();
@@ -324,21 +273,15 @@ pub async fn cmd_properties_rename(
     for event in &events {
         let summary = event.summary_or_default();
         let start = event.start_str();
-        let event_id = match &event.id {
-            Some(id) => id,
-            None => {
-                skipped_no_id += 1;
-                continue;
-            }
+        let Some(event_id) = &event.id else {
+            skipped_no_id += 1;
+            continue;
         };
 
         let mut existing = event.shared_properties();
-        let value = match existing.remove(&args.from) {
-            Some(v) => v,
-            None => {
-                skipped += 1;
-                continue;
-            }
+        let Some(value) = existing.remove(&args.from) else {
+            skipped += 1;
+            continue;
         };
 
         if !args.all {
@@ -387,13 +330,7 @@ pub async fn cmd_properties_edit(
     config: &Config,
     out: &OutputOptions,
 ) -> Result<()> {
-    let properties = config
-        .properties
-        .as_ref()
-        .context("no [properties] section in config.toml")?;
-    if properties.is_empty() {
-        bail!("no properties defined in [properties] section of config.toml");
-    }
+    let properties = require_properties(config)?;
 
     let (calendar_id, events) = fetch_events(client, args.calendar_name.as_deref(), config).await?;
     if events.is_empty() {
@@ -403,24 +340,16 @@ pub async fn cmd_properties_edit(
         return Ok(());
     }
 
-    let sorted_keys: Vec<&String> = {
-        let mut keys: Vec<_> = properties.keys().collect();
-        keys.sort();
-        keys
-    };
+    let sorted_keys = sorted_property_keys(properties);
 
     let mut updated = 0u32;
     let mut skipped_no_id = 0u32;
     for event in &events {
-        let summary = event.summary_or_default();
         let start = event.start_str();
         let end = event.end_str();
-        let event_id = match &event.id {
-            Some(id) => id,
-            None => {
-                skipped_no_id += 1;
-                continue;
-            }
+        let Some(event_id) = &event.id else {
+            skipped_no_id += 1;
+            continue;
         };
 
         let mut current = event.shared_properties();
@@ -428,47 +357,16 @@ pub async fn cmd_properties_edit(
         let mut deleted_keys: Vec<String> = Vec::new();
 
         loop {
-            eprintln!();
-            eprintln!("{summary}");
-            eprintln!("start: {start}");
-            eprintln!("end:   {end}");
-            if let Some(location) = &event.location {
-                eprintln!("location: {location}");
-            }
-            if let Some(description) = &event.description {
-                eprintln!("description: {description}");
-            }
-            if current.is_empty() && deleted_keys.is_empty() {
-                eprintln!("(no properties)");
-            } else {
-                for key in &sorted_keys {
-                    if let Some(val) = current.get(*key) {
-                        eprintln!("{key}: {val}");
-                    }
-                }
-                for (k, v) in &current {
-                    if !properties.contains_key(k) {
-                        eprintln!("{k}: {v} (unknown)");
-                    }
-                }
-            }
-
-            let mut menu_items: Vec<String> = Vec::new();
-            let mut menu_actions: Vec<(&str, String)> = Vec::new(); // (action, key)
-
-            for key in &sorted_keys {
-                if current.contains_key(*key) {
-                    menu_items.push(format!("change '{key}'"));
-                    menu_actions.push(("change", (*key).clone()));
-                    menu_items.push(format!("delete '{key}'"));
-                    menu_actions.push(("delete", (*key).clone()));
-                } else {
-                    menu_items.push(format!("add '{key}'"));
-                    menu_actions.push(("add", (*key).clone()));
-                }
-            }
-            menu_items.push("next event".to_string());
-            menu_items.push("quit".to_string());
+            print_event_properties(
+                event,
+                &start,
+                &end,
+                &current,
+                &deleted_keys,
+                &sorted_keys,
+                properties,
+            );
+            let (menu_items, menu_actions) = build_property_menu(&sorted_keys, &current);
 
             let selection = dialoguer::Select::new()
                 .with_prompt("Action")
@@ -564,12 +462,9 @@ pub async fn cmd_properties_set_value(
     for event in &events {
         let summary = event.summary_or_default();
         let start = event.start_str();
-        let event_id = match &event.id {
-            Some(id) => id,
-            None => {
-                skipped_no_id += 1;
-                continue;
-            }
+        let Some(event_id) = &event.id else {
+            skipped_no_id += 1;
+            continue;
         };
 
         let existing = event.shared_properties();
@@ -620,4 +515,137 @@ pub async fn cmd_properties_set_value(
     }
 
     Ok(())
+}
+
+/// Check the `properties add` arguments against the config and return the allowed properties.
+fn validate_add_args<'a>(
+    args: &PropertiesAddArgs,
+    config: &'a Config,
+) -> Result<&'a std::collections::HashMap<String, Vec<String>>> {
+    if args.key.is_some() != args.value.is_some() {
+        bail!("--key and --value must be used together");
+    }
+
+    let properties = require_properties(config)?;
+
+    if let (Some(key), Some(value)) = (&args.key, &args.value) {
+        let allowed = properties.get(key).with_context(|| {
+            format!("key '{key}' is not defined in [properties] in config.toml")
+        })?;
+        if !allowed.contains(value) {
+            bail!(
+                "value '{value}' is not allowed for key '{key}'. Allowed: {}",
+                allowed.join(", ")
+            );
+        }
+    }
+
+    Ok(properties)
+}
+
+/// Prompt for a value of every configured property the event lacks.
+/// Returns the new property map and whether anything was added.
+fn prompt_missing_properties(
+    existing: &std::collections::HashMap<String, String>,
+    sorted_keys: &[&String],
+    properties: &std::collections::HashMap<String, Vec<String>>,
+) -> Result<(std::collections::HashMap<String, String>, bool)> {
+    let mut new_props = existing.clone();
+    let mut changed = false;
+
+    for key in sorted_keys {
+        let values = &properties[*key];
+        if existing.contains_key(*key) {
+            continue;
+        }
+        let prompt = format!("Select {key}:");
+        if let Some(value) = prompt_select(&prompt, values)? {
+            new_props.insert((*key).clone(), value);
+            changed = true;
+        }
+    }
+    Ok((new_props, changed))
+}
+
+type PropertyMap = std::collections::HashMap<String, String>;
+
+/// Show an event and its current properties on stderr.
+fn print_event_properties(
+    event: &CalendarEvent,
+    start: &str,
+    end: &str,
+    current: &PropertyMap,
+    deleted_keys: &[String],
+    sorted_keys: &[&String],
+    properties: &std::collections::HashMap<String, Vec<String>>,
+) {
+    eprintln!();
+    eprintln!("{}", event.summary_or_default());
+    eprintln!("start: {start}");
+    eprintln!("end:   {end}");
+    if let Some(location) = &event.location {
+        eprintln!("location: {location}");
+    }
+    if let Some(description) = &event.description {
+        eprintln!("description: {description}");
+    }
+    if current.is_empty() && deleted_keys.is_empty() {
+        eprintln!("(no properties)");
+    } else {
+        for key in sorted_keys {
+            if let Some(val) = current.get(*key) {
+                eprintln!("{key}: {val}");
+            }
+        }
+        for (k, v) in current {
+            if !properties.contains_key(k) {
+                eprintln!("{k}: {v} (unknown)");
+            }
+        }
+    }
+}
+
+/// Build the menu texts and the (action, key) pairs for the property editor.
+/// The two trailing "next event" and "quit" entries have no action.
+fn build_property_menu(
+    sorted_keys: &[&String],
+    current: &PropertyMap,
+) -> (Vec<String>, Vec<(&'static str, String)>) {
+    let mut menu_items: Vec<String> = Vec::new();
+    let mut menu_actions: Vec<(&'static str, String)> = Vec::new();
+
+    for key in sorted_keys {
+        if current.contains_key(*key) {
+            menu_items.push(format!("change '{key}'"));
+            menu_actions.push(("change", (*key).clone()));
+            menu_items.push(format!("delete '{key}'"));
+            menu_actions.push(("delete", (*key).clone()));
+        } else {
+            menu_items.push(format!("add '{key}'"));
+            menu_actions.push(("add", (*key).clone()));
+        }
+    }
+    menu_items.push("next event".to_string());
+    menu_items.push("quit".to_string());
+    (menu_items, menu_actions)
+}
+
+/// The non-empty `[properties]` section of the config.
+fn require_properties(config: &Config) -> Result<&std::collections::HashMap<String, Vec<String>>> {
+    let properties = config
+        .properties
+        .as_ref()
+        .context("no [properties] section in config.toml")?;
+    if properties.is_empty() {
+        bail!("no properties defined in [properties] section of config.toml");
+    }
+    Ok(properties)
+}
+
+fn sorted_property_keys(
+    properties: &std::collections::HashMap<String, Vec<String>>,
+) -> Vec<&String> {
+    let mut keys: Vec<_> = properties.keys().collect();
+    keys.sort();
+    keys
 }

@@ -48,7 +48,7 @@ impl GoogleCalendarClient {
 
     /// Execute an HTTP request with retry on transient errors (429, 500, 502, 503, 504).
     /// Uses exponential backoff: 1s, 2s, 4s, max 3 retries.
-    /// Accepts a closure that builds the request, since RequestBuilder cannot be reused after send.
+    /// Accepts a closure that builds the request, since `RequestBuilder` cannot be reused after send.
     async fn send_with_retry<F, Fut>(&self, build_request: F) -> Result<reqwest::Response>
     where
         F: Fn() -> Fut,
@@ -82,7 +82,6 @@ impl GoogleCalendarClient {
                     eprintln!("Request failed ({e}), retrying in {}s...", delay.as_secs());
                     sleep(delay).await;
                     attempt += 1;
-                    continue;
                 }
                 Err(e) => return Err(e.into()),
             }

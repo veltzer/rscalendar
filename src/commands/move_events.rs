@@ -1,9 +1,10 @@
 use anyhow::{Context, Result};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::cli::{MoveEventsArgs, OutputOptions};
 use crate::client::GoogleCalendarClient;
 use crate::helpers::prompt_yes_no_quit;
+use crate::models::{CalendarEvent, CalendarListEntry};
 
 pub async fn cmd_move_events(
     client: &GoogleCalendarClient,
@@ -12,25 +13,8 @@ pub async fn cmd_move_events(
 ) -> Result<()> {
     let calendars = client.list_calendars().await?;
 
-    let source_cal = calendars
-        .iter()
-        .find(|c| c.summary.as_deref() == Some(&args.source))
-        .context(format!("no calendar named '{}' found", args.source))?;
-    let source_id = source_cal
-        .id
-        .as_deref()
-        .context("source calendar has no id")?
-        .to_string();
-
-    let target_cal = calendars
-        .iter()
-        .find(|c| c.summary.as_deref() == Some(&args.target))
-        .context(format!("no calendar named '{}' found", args.target))?;
-    let target_id = target_cal
-        .id
-        .as_deref()
-        .context("target calendar has no id")?
-        .to_string();
+    let source_id = find_calendar_id(&calendars, &args.source, "source")?;
+    let target_id = find_calendar_id(&calendars, &args.target, "target")?;
 
     if !out.quiet {
         println!("Moving events from '{}' to '{}'", args.source, args.target);
@@ -59,13 +43,10 @@ pub async fn cmd_move_events(
     for event in &events {
         let summary = event.summary_or_default();
         let start = event.start_str();
-        let event_id = match &event.id {
-            Some(id) => id,
-            None => {
-                eprintln!("skipping event with no id: {summary}");
-                skipped += 1;
-                continue;
-            }
+        let Some(event_id) = &event.id else {
+            eprintln!("skipping event with no id: {summary}");
+            skipped += 1;
+            continue;
         };
 
         if !args.all {
@@ -91,22 +72,7 @@ pub async fn cmd_move_events(
             }
             moved += 1;
         } else {
-            let mut payload = json!({ "summary": summary });
-            if let Some(start) = &event.start {
-                payload["start"] = serde_json::to_value(start)?;
-            }
-            if let Some(end) = &event.end {
-                payload["end"] = serde_json::to_value(end)?;
-            }
-            if let Some(desc) = &event.description {
-                payload["description"] = json!(desc);
-            }
-            if let Some(loc) = &event.location {
-                payload["location"] = json!(loc);
-            }
-            if let Some(props) = &event.extended_properties {
-                payload["extendedProperties"] = serde_json::to_value(props)?;
-            }
+            let payload = move_payload(event, summary)?;
 
             client.insert_event_raw(&target_id, &payload).await?;
             client.delete_event(&source_id, event_id).await?;
@@ -129,4 +95,36 @@ pub async fn cmd_move_events(
     }
 
     Ok(())
+}
+
+fn find_calendar_id(calendars: &[CalendarListEntry], name: &str, role: &str) -> Result<String> {
+    let cal = calendars
+        .iter()
+        .find(|c| c.summary.as_deref() == Some(name))
+        .context(format!("no calendar named '{name}' found"))?;
+    Ok(cal
+        .id
+        .as_deref()
+        .context(format!("{role} calendar has no id"))?
+        .to_string())
+}
+
+fn move_payload(event: &CalendarEvent, summary: &str) -> Result<Value> {
+    let mut payload = json!({ "summary": summary });
+    if let Some(start) = &event.start {
+        payload["start"] = serde_json::to_value(start)?;
+    }
+    if let Some(end) = &event.end {
+        payload["end"] = serde_json::to_value(end)?;
+    }
+    if let Some(desc) = &event.description {
+        payload["description"] = json!(desc);
+    }
+    if let Some(loc) = &event.location {
+        payload["location"] = json!(loc);
+    }
+    if let Some(props) = &event.extended_properties {
+        payload["extendedProperties"] = serde_json::to_value(props)?;
+    }
+    Ok(payload)
 }

@@ -41,15 +41,13 @@ impl CalendarEvent {
     pub fn start_str(&self) -> String {
         self.start
             .as_ref()
-            .map(EventDateTime::describe)
-            .unwrap_or_else(|| "unknown".to_string())
+            .map_or_else(|| "unknown".to_string(), EventDateTime::describe)
     }
 
     pub fn end_str(&self) -> String {
         self.end
             .as_ref()
-            .map(EventDateTime::describe)
-            .unwrap_or_else(|| "unknown".to_string())
+            .map_or_else(|| "unknown".to_string(), EventDateTime::describe)
     }
 
     pub fn shared_properties(&self) -> HashMap<String, String> {

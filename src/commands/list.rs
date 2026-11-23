@@ -7,11 +7,11 @@ use crate::cli::{CalendarNameArgs, ListArgs, ListFormat, OutputOptions};
 use crate::client::GoogleCalendarClient;
 use crate::config::Config;
 use crate::fetch_events;
-use crate::models::{EventDateTime, print_calendar, print_event};
+use crate::models::{CalendarEvent, EventDateTime, print_calendar, print_event};
 
 // --- Filter helpers ---
 
-/// Parse a date string (RFC3339 or YYYY-MM-DD) into a chrono DateTime<chrono::FixedOffset>.
+/// Parse a date string (RFC3339 or YYYY-MM-DD) into a chrono `DateTime`<chrono::FixedOffset>.
 /// For YYYY-MM-DD, midnight UTC is used.
 pub fn parse_filter_date(s: &str) -> Result<chrono::DateTime<chrono::FixedOffset>> {
     if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
@@ -28,7 +28,7 @@ pub fn parse_filter_date(s: &str) -> Result<chrono::DateTime<chrono::FixedOffset
     )
 }
 
-/// Extract an event's start time as a DateTime for comparison.
+/// Extract an event's start time as a `DateTime` for comparison.
 pub fn event_start_to_datetime(
     edt: &EventDateTime,
 ) -> Option<chrono::DateTime<chrono::FixedOffset>> {
@@ -83,66 +83,15 @@ pub async fn cmd_list(
         }
     });
 
+    let filter = EventFilter {
+        starts_after,
+        starts_before,
+        search_lower,
+        has_property,
+    };
     let filtered: Vec<_> = events
         .iter()
-        .filter(|event| {
-            // --starts-after filter
-            if let Some(ref after) = starts_after
-                && let Some(start) = &event.start
-            {
-                let event_dt = event_start_to_datetime(start);
-                if let Some(evt) = event_dt
-                    && evt <= *after
-                {
-                    return false;
-                }
-            }
-            // --starts-before filter
-            if let Some(ref before) = starts_before
-                && let Some(start) = &event.start
-            {
-                let event_dt = event_start_to_datetime(start);
-                if let Some(evt) = event_dt
-                    && evt >= *before
-                {
-                    return false;
-                }
-            }
-            // --search filter
-            if let Some(ref pattern) = search_lower {
-                let summary_match = event
-                    .summary
-                    .as_ref()
-                    .is_some_and(|s| s.to_lowercase().contains(pattern));
-                let desc_match = event
-                    .description
-                    .as_ref()
-                    .is_some_and(|d| d.to_lowercase().contains(pattern));
-                if !summary_match && !desc_match {
-                    return false;
-                }
-            }
-            // --has-property filter
-            if let Some((ref key, ref val)) = has_property {
-                let shared = event
-                    .extended_properties
-                    .as_ref()
-                    .and_then(|p| p.shared.as_ref());
-                match val {
-                    Some(expected) => {
-                        if !shared.is_some_and(|s| s.get(key).is_some_and(|v| v == expected)) {
-                            return false;
-                        }
-                    }
-                    None => {
-                        if !shared.is_some_and(|s| s.contains_key(key)) {
-                            return false;
-                        }
-                    }
-                }
-            }
-            true
-        })
+        .filter(|event| filter.matches(event))
         .collect();
 
     if args.count {
@@ -153,46 +102,7 @@ pub async fn cmd_list(
         }
     } else {
         match args.format {
-            ListFormat::Table => {
-                println!(
-                    "{:<30} {:<12} {:<12} {:<15} {:<15}",
-                    "SUMMARY", "START", "END", "TYPE", "CLIENT"
-                );
-                println!("{}", "-".repeat(84));
-                for event in &filtered {
-                    let summary = event.summary_or_default();
-                    let start = event.start_str();
-                    let end = event.end_str();
-                    let shared = event
-                        .extended_properties
-                        .as_ref()
-                        .and_then(|p| p.shared.as_ref());
-                    let type_val = shared
-                        .and_then(|s| s.get("type"))
-                        .map(|s| s.as_str())
-                        .unwrap_or("");
-                    let client_val = shared
-                        .and_then(|s| s.get("client"))
-                        .map(|s| s.as_str())
-                        .unwrap_or("");
-                    // Truncate long values
-                    let trunc = |s: &str, max: usize| -> String {
-                        if s.len() > max {
-                            format!("{}...", &s[..max - 3])
-                        } else {
-                            s.to_string()
-                        }
-                    };
-                    println!(
-                        "{:<30} {:<12} {:<12} {:<15} {:<15}",
-                        trunc(summary, 30),
-                        trunc(&start, 12),
-                        trunc(&end, 12),
-                        trunc(type_val, 15),
-                        trunc(client_val, 15)
-                    );
-                }
-            }
+            ListFormat::Table => print_table(&filtered),
             ListFormat::Default => {
                 for event in &filtered {
                     print_event(event, out.show_builtin, out.json);
@@ -255,9 +165,9 @@ pub async fn cmd_stats(
 
         if let Some(start) = &event.start {
             let month_str = if let Some(ref dt_str) = start.date_time {
-                dt_str.get(..7).map(|s| s.to_string())
+                dt_str.get(..7).map(std::string::ToString::to_string)
             } else if let Some(ref d_str) = start.date {
-                d_str.get(..7).map(|s| s.to_string())
+                d_str.get(..7).map(std::string::ToString::to_string)
             } else {
                 None
             };
@@ -283,4 +193,114 @@ pub async fn cmd_stats(
     }
 
     Ok(())
+}
+
+type DateTimeFixed = chrono::DateTime<chrono::FixedOffset>;
+
+/// The parsed `list` filters.
+struct EventFilter {
+    starts_after: Option<DateTimeFixed>,
+    starts_before: Option<DateTimeFixed>,
+    search_lower: Option<String>,
+    has_property: Option<(String, Option<String>)>,
+}
+
+impl EventFilter {
+    fn matches(&self, event: &CalendarEvent) -> bool {
+        // --starts-after filter
+        if let Some(ref after) = self.starts_after
+            && let Some(start) = &event.start
+        {
+            let event_dt = event_start_to_datetime(start);
+            if let Some(evt) = event_dt
+                && evt <= *after
+            {
+                return false;
+            }
+        }
+        // --starts-before filter
+        if let Some(ref before) = self.starts_before
+            && let Some(start) = &event.start
+        {
+            let event_dt = event_start_to_datetime(start);
+            if let Some(evt) = event_dt
+                && evt >= *before
+            {
+                return false;
+            }
+        }
+        // --search filter
+        if let Some(ref pattern) = self.search_lower {
+            let summary_match = event
+                .summary
+                .as_ref()
+                .is_some_and(|s| s.to_lowercase().contains(pattern));
+            let desc_match = event
+                .description
+                .as_ref()
+                .is_some_and(|d| d.to_lowercase().contains(pattern));
+            if !summary_match && !desc_match {
+                return false;
+            }
+        }
+        // --has-property filter
+        if let Some((ref key, ref val)) = self.has_property {
+            let shared = event
+                .extended_properties
+                .as_ref()
+                .and_then(|p| p.shared.as_ref());
+            match val {
+                Some(expected) => {
+                    if shared.is_none_or(|s| s.get(key).is_none_or(|v| v != expected)) {
+                        return false;
+                    }
+                }
+                None => {
+                    if !shared.is_some_and(|s| s.contains_key(key)) {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
+    }
+}
+
+fn print_table(events: &[&CalendarEvent]) {
+    println!(
+        "{:<30} {:<12} {:<12} {:<15} {:<15}",
+        "SUMMARY", "START", "END", "TYPE", "CLIENT"
+    );
+    println!("{}", "-".repeat(84));
+    for event in events {
+        let summary = event.summary_or_default();
+        let start = event.start_str();
+        let end = event.end_str();
+        let shared = event
+            .extended_properties
+            .as_ref()
+            .and_then(|p| p.shared.as_ref());
+        let type_val = shared
+            .and_then(|s| s.get("type"))
+            .map_or("", std::string::String::as_str);
+        let client_val = shared
+            .and_then(|s| s.get("client"))
+            .map_or("", std::string::String::as_str);
+        // Truncate long values
+        let trunc = |s: &str, max: usize| -> String {
+            if s.len() > max {
+                format!("{}...", &s[..max - 3])
+            } else {
+                s.to_string()
+            }
+        };
+        println!(
+            "{:<30} {:<12} {:<12} {:<15} {:<15}",
+            trunc(summary, 30),
+            trunc(&start, 12),
+            trunc(&end, 12),
+            trunc(type_val, 15),
+            trunc(client_val, 15)
+        );
+    }
 }

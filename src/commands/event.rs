@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use anyhow::Result;
 use serde_json::{Map, Value, json};
 
@@ -93,82 +95,25 @@ pub async fn cmd_event_edit(
 
     loop {
         // Show current state
-        let summary = changed_fields
-            .get("summary")
-            .and_then(|v| v.as_str())
-            .unwrap_or(event.summary_or_default());
-        let start = changed_fields
-            .get("start")
-            .and_then(|v| v.get("dateTime").or(v.get("date")))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| event.start_str());
-        let end = changed_fields
-            .get("end")
-            .and_then(|v| v.get("dateTime").or(v.get("date")))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| event.end_str());
-        let description = changed_fields
-            .get("description")
-            .and_then(|v| v.as_str())
-            .or(event.description.as_deref());
-        let location = changed_fields
-            .get("location")
-            .and_then(|v| v.as_str())
-            .or(event.location.as_deref());
+        let summary = effective_text(&changed_fields, "summary", Some(event.summary_or_default()))
+            .unwrap_or_default();
+        let start = effective_time(&changed_fields, "start", event.start_str());
+        let end = effective_time(&changed_fields, "end", event.end_str());
+        let description =
+            effective_text(&changed_fields, "description", event.description.as_deref());
+        let location = effective_text(&changed_fields, "location", event.location.as_deref());
 
-        eprintln!();
-        eprintln!("{summary}");
-        eprintln!("start: {start}");
-        eprintln!("end: {end}");
-        if let Some(loc) = location {
-            eprintln!("location: {loc}");
-        }
-        if let Some(desc) = description {
-            eprintln!("description: {desc}");
-        }
-        if !current_props.is_empty() {
-            eprintln!("---");
-            let mut keys: Vec<_> = current_props.keys().collect();
-            keys.sort();
-            for key in &keys {
-                eprintln!("{key}: {}", current_props[*key]);
-            }
-        }
+        print_event_state(
+            &summary,
+            &start,
+            &end,
+            location.as_deref(),
+            description.as_deref(),
+            &current_props,
+        );
 
         // Build menu
-        let mut menu_items: Vec<String> = vec![
-            "edit summary".to_string(),
-            "edit start".to_string(),
-            "edit end".to_string(),
-            "edit description".to_string(),
-            "edit location".to_string(),
-        ];
-        let mut menu_actions: Vec<&str> =
-            vec!["summary", "start", "end", "description", "location"];
-
-        // Property actions
-        if let Some(props) = properties {
-            let mut sorted_keys: Vec<_> = props.keys().collect();
-            sorted_keys.sort();
-            for key in &sorted_keys {
-                if current_props.contains_key(*key) {
-                    menu_items.push(format!("change property '{key}'"));
-                    menu_actions.push("prop_change");
-                    menu_items.push(format!("delete property '{key}'"));
-                    menu_actions.push("prop_delete");
-                } else {
-                    menu_items.push(format!("add property '{key}'"));
-                    menu_actions.push("prop_add");
-                }
-            }
-        }
-
-        menu_items.push("save and quit".to_string());
-        menu_actions.push("save");
-        menu_items.push("quit without saving".to_string());
-        menu_actions.push("discard");
+        let (menu_items, menu_actions) = build_menu(properties, &current_props);
 
         let selection = dialoguer::Select::new()
             .with_prompt("Action")
@@ -180,50 +125,16 @@ pub async fn cmd_event_edit(
         let item_text = &menu_items[selection];
 
         match action {
-            "summary" => {
-                let current = changed_fields
-                    .get("summary")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(event.summary_or_default());
-                let new_val: String = dialoguer::Input::new()
-                    .with_prompt("Summary")
-                    .with_initial_text(current)
-                    .interact_text()?;
-                changed_fields.insert("summary".to_string(), json!(new_val));
-            }
-            "start" => {
-                let new_val: String = dialoguer::Input::new()
-                    .with_prompt("Start (RFC3339 or YYYY-MM-DD)")
-                    .with_initial_text(&start)
-                    .interact_text()?;
-                let parsed = parse_event_time(&new_val, false)?;
-                changed_fields.insert("start".to_string(), serde_json::to_value(&parsed)?);
-            }
-            "end" => {
-                let new_val: String = dialoguer::Input::new()
-                    .with_prompt("End (RFC3339 or YYYY-MM-DD)")
-                    .with_initial_text(&end)
-                    .interact_text()?;
-                let parsed = parse_event_time(&new_val, true)?;
-                changed_fields.insert("end".to_string(), serde_json::to_value(&parsed)?);
-            }
-            "description" => {
-                let current = description.unwrap_or("");
-                let new_val: String = dialoguer::Input::new()
-                    .with_prompt("Description")
-                    .with_initial_text(current)
-                    .allow_empty(true)
-                    .interact_text()?;
-                changed_fields.insert("description".to_string(), json!(new_val));
-            }
-            "location" => {
-                let current = location.unwrap_or("");
-                let new_val: String = dialoguer::Input::new()
-                    .with_prompt("Location")
-                    .with_initial_text(current)
-                    .allow_empty(true)
-                    .interact_text()?;
-                changed_fields.insert("location".to_string(), json!(new_val));
+            "summary" | "start" | "end" | "description" | "location" => {
+                let (field, initial) = match action {
+                    "summary" => (TextField::Summary, summary.as_str()),
+                    "start" => (TextField::Start, start.as_str()),
+                    "end" => (TextField::End, end.as_str()),
+                    "description" => (TextField::Description, description.as_deref().unwrap_or("")),
+                    "location" => (TextField::Location, location.as_deref().unwrap_or("")),
+                    other => unreachable!("unexpected text action {other}"),
+                };
+                edit_text_field(&mut changed_fields, field, initial)?;
             }
             "prop_add" | "prop_change" => {
                 // Extract key name from menu text like "add property 'course'" or "change property 'course'"
@@ -245,30 +156,16 @@ pub async fn cmd_event_edit(
                 props_changed = true;
             }
             "save" => {
-                let has_field_changes = !changed_fields.is_empty();
-                if has_field_changes {
-                    client
-                        .update_event(calendar_id, &args.event_id, &changed_fields)
-                        .await?;
-                }
-                if props_changed {
-                    client
-                        .patch_event_properties_with_deletes(
-                            calendar_id,
-                            &args.event_id,
-                            &current_props,
-                            &deleted_prop_keys,
-                        )
-                        .await?;
-                }
-                if has_field_changes || props_changed {
-                    if !out.quiet {
-                        println!("Event saved.");
-                    }
-                } else {
-                    if !out.quiet {
-                        println!("No changes.");
-                    }
+                let saved = save_changes(
+                    client,
+                    calendar_id,
+                    &args.event_id,
+                    &changed_fields,
+                    props_changed.then_some((&current_props, deleted_prop_keys.as_slice())),
+                )
+                .await?;
+                if !out.quiet {
+                    println!("{}", if saved { "Event saved." } else { "No changes." });
                 }
                 return Ok(());
             }
@@ -291,4 +188,177 @@ fn extract_property_key(menu_text: &str) -> String {
         return menu_text[start + 1..start + 1 + end].to_string();
     }
     String::new()
+}
+
+fn print_event_state(
+    summary: &str,
+    start: &str,
+    end: &str,
+    location: Option<&str>,
+    description: Option<&str>,
+    props: &HashMap<String, String>,
+) {
+    eprintln!();
+    eprintln!("{summary}");
+    eprintln!("start: {start}");
+    eprintln!("end: {end}");
+    if let Some(loc) = location {
+        eprintln!("location: {loc}");
+    }
+    if let Some(desc) = description {
+        eprintln!("description: {desc}");
+    }
+    if !props.is_empty() {
+        eprintln!("---");
+        let mut keys: Vec<_> = props.keys().collect();
+        keys.sort();
+        for key in &keys {
+            eprintln!("{key}: {}", props[*key]);
+        }
+    }
+}
+
+/// Build the interactive menu: display texts and the matching action names.
+fn build_menu(
+    properties: Option<&HashMap<String, Vec<String>>>,
+    current_props: &HashMap<String, String>,
+) -> (Vec<String>, Vec<&'static str>) {
+    let mut menu_items: Vec<String> = vec![
+        "edit summary".to_string(),
+        "edit start".to_string(),
+        "edit end".to_string(),
+        "edit description".to_string(),
+        "edit location".to_string(),
+    ];
+    let mut menu_actions: Vec<&'static str> =
+        vec!["summary", "start", "end", "description", "location"];
+
+    // Property actions
+    if let Some(props) = properties {
+        let mut sorted_keys: Vec<_> = props.keys().collect();
+        sorted_keys.sort();
+        for key in &sorted_keys {
+            if current_props.contains_key(*key) {
+                menu_items.push(format!("change property '{key}'"));
+                menu_actions.push("prop_change");
+                menu_items.push(format!("delete property '{key}'"));
+                menu_actions.push("prop_delete");
+            } else {
+                menu_items.push(format!("add property '{key}'"));
+                menu_actions.push("prop_add");
+            }
+        }
+    }
+
+    menu_items.push("save and quit".to_string());
+    menu_actions.push("save");
+    menu_items.push("quit without saving".to_string());
+    menu_actions.push("discard");
+    (menu_items, menu_actions)
+}
+
+/// An editable text field of an event.
+#[derive(Clone, Copy)]
+enum TextField {
+    Summary,
+    Start,
+    End,
+    Description,
+    Location,
+}
+
+impl TextField {
+    /// The Google Calendar JSON key of the field.
+    const fn key(self) -> &'static str {
+        match self {
+            Self::Summary => "summary",
+            Self::Start => "start",
+            Self::End => "end",
+            Self::Description => "description",
+            Self::Location => "location",
+        }
+    }
+
+    const fn prompt(self) -> &'static str {
+        match self {
+            Self::Summary => "Summary",
+            Self::Start => "Start (RFC3339 or YYYY-MM-DD)",
+            Self::End => "End (RFC3339 or YYYY-MM-DD)",
+            Self::Description => "Description",
+            Self::Location => "Location",
+        }
+    }
+}
+
+/// Prompt for a new value of one text field and record it in `changed_fields`.
+fn edit_text_field(
+    changed_fields: &mut Map<String, Value>,
+    field: TextField,
+    initial: &str,
+) -> Result<()> {
+    let input = dialoguer::Input::<String>::new()
+        .with_prompt(field.prompt())
+        .with_initial_text(initial);
+    let value = match field {
+        TextField::Summary => json!(input.interact_text()?),
+        TextField::Description | TextField::Location => {
+            json!(input.allow_empty(true).interact_text()?)
+        }
+        TextField::Start | TextField::End => {
+            let new_val = input.interact_text()?;
+            serde_json::to_value(parse_event_time(&new_val, matches!(field, TextField::End))?)?
+        }
+    };
+    changed_fields.insert(field.key().to_string(), value);
+    Ok(())
+}
+
+/// Send field and property changes to the server.
+/// Returns whether anything was changed.
+async fn save_changes(
+    client: &GoogleCalendarClient,
+    calendar_id: &str,
+    event_id: &str,
+    changed_fields: &Map<String, Value>,
+    props: Option<(&HashMap<String, String>, &[String])>,
+) -> Result<bool> {
+    let has_field_changes = !changed_fields.is_empty();
+    if has_field_changes {
+        client
+            .update_event(calendar_id, event_id, changed_fields)
+            .await?;
+    }
+    if let Some((current_props, deleted_prop_keys)) = props {
+        client
+            .patch_event_properties_with_deletes(
+                calendar_id,
+                event_id,
+                current_props,
+                deleted_prop_keys,
+            )
+            .await?;
+    }
+    Ok(has_field_changes || props.is_some())
+}
+
+/// The pending text of a field: the edited value if any, else the original.
+fn effective_text(
+    changed_fields: &Map<String, Value>,
+    key: &str,
+    original: Option<&str>,
+) -> Option<String> {
+    changed_fields
+        .get(key)
+        .and_then(Value::as_str)
+        .or(original)
+        .map(str::to_string)
+}
+
+/// The pending time of a field: the edited value if any, else the original.
+fn effective_time(changed_fields: &Map<String, Value>, key: &str, original: String) -> String {
+    changed_fields
+        .get(key)
+        .and_then(|v| v.get("dateTime").or(v.get("date")))
+        .and_then(Value::as_str)
+        .map_or(original, str::to_string)
 }

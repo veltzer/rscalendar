@@ -37,10 +37,8 @@ pub async fn cmd_calendar_delete(
         if !out.quiet {
             println!("Deleted calendar '{name}'.");
         }
-    } else {
-        if !out.quiet {
-            println!("Aborted.");
-        }
+    } else if !out.quiet {
+        println!("Aborted.");
     }
     Ok(())
 }
@@ -88,13 +86,10 @@ pub async fn cmd_calendar_clear(
     for event in &events {
         let summary = event.summary_or_default();
         let start = event.start_str();
-        let event_id = match &event.id {
-            Some(id) => id,
-            None => {
-                eprintln!("skipping event with no id: {summary}");
-                skipped += 1;
-                continue;
-            }
+        let Some(event_id) = &event.id else {
+            eprintln!("skipping event with no id: {summary}");
+            skipped += 1;
+            continue;
         };
 
         if !args.all {

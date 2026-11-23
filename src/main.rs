@@ -15,6 +15,9 @@ use config::Config;
 
 // --- Helper: fetch events for a calendar by name ---
 
+/// TODO
+/// # Errors
+/// Returns an error if the command fails.
 pub async fn fetch_events(
     client: &GoogleCalendarClient,
     calendar_name: Option<&str>,
@@ -24,6 +27,73 @@ pub async fn fetch_events(
     let calendar_id = client::resolve_calendar_id(&calendars, calendar_name, config)?.to_string();
     let events = client.list_all_events(&calendar_id).await?;
     Ok((calendar_id, events))
+}
+
+fn print_version() {
+    println!(
+        "rscalendar {} by {}",
+        env!("CARGO_PKG_VERSION"),
+        env!("CARGO_PKG_AUTHORS")
+    );
+    println!("GIT_DESCRIBE: {}", env!("GIT_DESCRIBE"));
+    println!("GIT_SHA: {}", env!("GIT_SHA"));
+    println!("GIT_BRANCH: {}", env!("GIT_BRANCH"));
+    println!("GIT_DIRTY: {}", env!("GIT_DIRTY"));
+    println!("RUSTC_SEMVER: {}", env!("RUSTC_SEMVER"));
+    println!("RUST_EDITION: {}", env!("RUST_EDITION"));
+    println!("BUILD_TIMESTAMP: {}", env!("BUILD_TIMESTAMP"));
+}
+
+fn print_defconfig() {
+    print!(
+        "\
+# Default calendar name
+# calendar_name = \"My Calendar\"
+
+# Don't open browser during auth (useful for headless machines)
+# no_browser = false
+
+# Allowed properties for events
+# [properties]
+# type = [\"teaching\", \"working\", \"call\", \"meeting\"]
+# company = [\"Amdocs\", \"Intel\", \"Google\"]
+# course = [\"Linux Fundamentals\", \"Advanced Python\"]
+
+# Required properties per event type (used by 'check' command)
+# [check]
+# teaching = [\"client\", \"company\", \"course\"]
+# working = [\"client\", \"company\"]
+"
+    );
+}
+
+async fn run_properties(
+    client: &GoogleCalendarClient,
+    action: PropertiesAction,
+    config: &Config,
+    out: &OutputOptions,
+) -> Result<()> {
+    match action {
+        PropertiesAction::Add(args) => {
+            commands::properties::cmd_properties_add(client, &args, config, out).await?;
+        }
+        PropertiesAction::Check(args) => {
+            commands::properties::cmd_properties_check(client, &args, config, out).await?;
+        }
+        PropertiesAction::Delete(args) => {
+            commands::properties::cmd_properties_delete(client, &args, config, out).await?;
+        }
+        PropertiesAction::Rename(args) => {
+            commands::properties::cmd_properties_rename(client, &args, config, out).await?;
+        }
+        PropertiesAction::Edit(args) => {
+            commands::properties::cmd_properties_edit(client, &args, config, out).await?;
+        }
+        PropertiesAction::SetValue(args) => {
+            commands::properties::cmd_properties_set_value(client, &args, config, out).await?;
+        }
+    }
+    Ok(())
 }
 
 // --- Main ---
@@ -44,42 +114,12 @@ async fn main() -> Result<()> {
     }
 
     if let Command::Version = &cli.command {
-        println!(
-            "rscalendar {} by {}",
-            env!("CARGO_PKG_VERSION"),
-            env!("CARGO_PKG_AUTHORS")
-        );
-        println!("GIT_DESCRIBE: {}", env!("GIT_DESCRIBE"));
-        println!("GIT_SHA: {}", env!("GIT_SHA"));
-        println!("GIT_BRANCH: {}", env!("GIT_BRANCH"));
-        println!("GIT_DIRTY: {}", env!("GIT_DIRTY"));
-        println!("RUSTC_SEMVER: {}", env!("RUSTC_SEMVER"));
-        println!("RUST_EDITION: {}", env!("RUST_EDITION"));
-        println!("BUILD_TIMESTAMP: {}", env!("BUILD_TIMESTAMP"));
+        print_version();
         return Ok(());
     }
 
     if let Command::Defconfig = &cli.command {
-        print!(
-            "\
-# Default calendar name
-# calendar_name = \"My Calendar\"
-
-# Don't open browser during auth (useful for headless machines)
-# no_browser = false
-
-# Allowed properties for events
-# [properties]
-# type = [\"teaching\", \"working\", \"call\", \"meeting\"]
-# company = [\"Amdocs\", \"Intel\", \"Google\"]
-# course = [\"Linux Fundamentals\", \"Advanced Python\"]
-
-# Required properties per event type (used by 'check' command)
-# [check]
-# teaching = [\"client\", \"company\", \"course\"]
-# working = [\"client\", \"company\"]
-"
-        );
+        print_defconfig();
         return Ok(());
     }
 
@@ -122,27 +162,7 @@ async fn main() -> Result<()> {
         Command::Check(args) => {
             commands::check::cmd_check(&client, &args, &config, &out).await?;
         }
-        Command::Properties { action } => match action {
-            PropertiesAction::Add(args) => {
-                commands::properties::cmd_properties_add(&client, &args, &config, &out).await?;
-            }
-            PropertiesAction::Check(args) => {
-                commands::properties::cmd_properties_check(&client, &args, &config, &out).await?;
-            }
-            PropertiesAction::Delete(args) => {
-                commands::properties::cmd_properties_delete(&client, &args, &config, &out).await?;
-            }
-            PropertiesAction::Rename(args) => {
-                commands::properties::cmd_properties_rename(&client, &args, &config, &out).await?;
-            }
-            PropertiesAction::Edit(args) => {
-                commands::properties::cmd_properties_edit(&client, &args, &config, &out).await?;
-            }
-            PropertiesAction::SetValue(args) => {
-                commands::properties::cmd_properties_set_value(&client, &args, &config, &out)
-                    .await?;
-            }
-        },
+        Command::Properties { action } => run_properties(&client, action, &config, &out).await?,
         Command::Calendar { action } => match action {
             CalendarAction::Create { name } => {
                 commands::calendar::cmd_calendar_create(&client, &name, &out).await?;

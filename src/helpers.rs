@@ -42,7 +42,7 @@ pub fn build_event_patch_payload(
     Ok(payload)
 }
 
-/// Parse a user-supplied time string into an EventDateTime.
+/// Parse a user-supplied time string into an `EventDateTime`.
 ///
 /// Accepts either RFC3339 (datetime with timezone) or YYYY-MM-DD (date-only).
 /// For date-only inputs, no timezone conversion is applied. This is intentional:

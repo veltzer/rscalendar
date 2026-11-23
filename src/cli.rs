@@ -56,7 +56,7 @@ pub enum Command {
     Stats(CalendarNameArgs),
     /// Interactively move events from one calendar to another.
     MoveEvents(MoveEventsArgs),
-    /// Authenticate with Google via OAuth2 and cache the token.
+    /// Authenticate with Google via `OAuth2` and cache the token.
     Auth(AuthArgs),
     /// Generate shell completions.
     Complete {
@@ -373,8 +373,8 @@ pub struct OutputOptions {
 mod tests {
     use super::*;
 
-    fn parse_auth(args: &[&str]) -> AuthArgs {
-        let argv = [&["rscalendar", "auth"], args].concat();
+    fn parse_auth(extra: &[&str]) -> AuthArgs {
+        let argv = [&["rscalendar", "auth"], extra].concat();
         match Cli::parse_from(argv).command {
             Command::Auth(a) => a,
             other => panic!("expected auth, got {other:?}"),
