@@ -80,8 +80,22 @@ impl yup_oauth2::authenticator_delegate::InstalledFlowDelegate for BrowserFlowDe
         _need_code: bool,
     ) -> Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'a>> {
         Box::pin(async move {
-            if let Err(e) = open::that(url) {
-                eprintln!("Failed to open browser: {e}. Please open this URL manually:\n{url}");
+            eprintln!("Opening your web browser to sign in to Google...");
+            match open::that(url) {
+                Ok(()) => {
+                    eprintln!(
+                        "Complete the authorization in the browser window that just opened.\n\
+                         This command waits here until you approve access.\n\
+                         If no browser window appeared, open this URL yourself:\n{url}"
+                    );
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Could not open the browser ({e}).\n\
+                         Open this URL yourself and complete the authorization there:\n{url}\n\
+                         This command waits here until you approve access."
+                    );
+                }
             }
             Ok(String::new())
         })
