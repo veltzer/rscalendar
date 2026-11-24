@@ -21,7 +21,7 @@
 
 ## Key conventions
 
-- Authentication is out of process in this first version. Do not add placeholder secrets or hardcoded tokens; the CLI expects `GOOGLE_CALENDAR_ACCESS_TOKEN` from the environment.
+- Authentication is OAuth (`rscalendar auth`). The OAuth client and token cache are read from pass entries (`gcp/veltzer-rscalendar-id/oauth-client`, `gcp/veltzer-rscalendar-id/token`) and fall back to `~/.config/rscalendar/credentials.json` and `token_cache.json`. Do not add placeholder secrets or hardcoded tokens, and never log secret values.
 - Date parsing accepts either RFC3339 timestamps or `YYYY-MM-DD`. For all-day events, the CLI treats the supplied `--end` date as inclusive and converts it to Google Calendar's exclusive end-date format before sending the API request.
 - `update` is intentionally sparse: only provided fields are patched, and calling it without any mutable fields should remain an error.
 - The repository currently keeps the CLI, API client, payload helpers, and unit tests together in `src/main.rs`; preserve that simplicity unless growth makes a split clearly worthwhile.

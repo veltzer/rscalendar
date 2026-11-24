@@ -4,6 +4,8 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
+use crate::pass::PassConfig;
+
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -11,6 +13,7 @@ pub struct Config {
     pub no_browser: Option<bool>,
     pub properties: Option<HashMap<String, Vec<String>>>,
     pub check: Option<HashMap<String, Vec<String>>>,
+    pub pass: PassConfig,
 }
 
 impl Config {
@@ -88,6 +91,12 @@ pub fn credentials_path() -> Result<PathBuf> {
     }
     Ok(path)
 }
+
+/// The pass entry holding the OAuth client JSON unless `[pass]` overrides it.
+pub const DEFAULT_PASS_OAUTH_CLIENT: &str = "gcp/veltzer-rscalendar-id/oauth-client";
+
+/// The pass entry holding the token cache unless `[pass]` overrides it.
+pub const DEFAULT_PASS_TOKEN: &str = "gcp/veltzer-rscalendar-id/token";
 
 pub fn token_cache_path() -> Result<PathBuf> {
     Ok(config_dir()?.join("token_cache.json"))

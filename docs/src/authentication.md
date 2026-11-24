@@ -8,12 +8,40 @@ rscalendar uses OAuth2 to access the Google Calendar API on your behalf.
 2. On first use, rscalendar opens your browser to get consent
 3. The access token is cached locally for future requests
 
-## Files
+## Where the secrets live
 
-| File | Location | Purpose |
-|------|----------|---------|
-| Credentials | `~/.config/rscalendar/credentials.json` | OAuth2 client ID and secret |
-| Token cache | `~/.config/rscalendar/token_cache.json` | Cached access/refresh tokens |
+rscalendar looks in [pass](https://www.passwordstore.org/) first and falls back
+to plain files when `pass` is not installed or the entry does not exist.
+
+| What | pass entry (default) | Fallback file |
+|------|----------------------|---------------|
+| OAuth2 client (the JSON from Google Cloud Console) | `gcp/veltzer-rscalendar-id/oauth-client` | `~/.config/rscalendar/credentials.json` |
+| Token cache (access/refresh tokens) | `gcp/veltzer-rscalendar-id/token` | `~/.config/rscalendar/token_cache.json` |
+
+Users without a pass store need do nothing: the files work exactly as before.
+
+The entries can be renamed in `config.toml` (see [Configuration](configuration.md)).
+
+To use pass, store the content of the two files in the entries:
+
+```bash
+pass insert -m gcp/veltzer-rscalendar-id/oauth-client < credentials.json
+pass insert -m gcp/veltzer-rscalendar-id/token < token_cache.json
+```
+
+The pass token entry has the same JSON layout as `token_cache.json`.
+
+Rules in pass mode:
+
+- The token entry is used when it exists, or when the OAuth client came from
+  pass. In that case `rscalendar auth` creates the token entry and never
+  writes a plaintext token file.
+- The pass store is usually a git repository, so the token entry is not
+  rewritten every time the one-hour access token is refreshed. Refreshed
+  access tokens are kept in memory only. The entry is written when you
+  authorize (`auth`, `auth --force`) or when Google issues a new refresh token.
+- `auth --force` removes the token entry (`pass rm`) before authorizing again.
+- Secret values are never printed; messages name the entry only.
 
 ## Commands
 
@@ -29,7 +57,7 @@ Authenticate without browser (prints URL):
 rscalendar auth --no-browser
 ```
 
-Force re-authentication (removes cached token first):
+Force re-authentication (removes the cached token first, in pass or on disk):
 
 ```bash
 rscalendar auth --force

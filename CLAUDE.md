@@ -10,3 +10,9 @@
 - `cargo build` must produce no warnings.
 - `cargo test` must pass all tests.
 - `mdbook build docs` must succeed.
+
+## Credentials
+
+- The OAuth client JSON and the token cache come from pass(1) first (`gcp/veltzer-rscalendar-id/oauth-client` and `gcp/veltzer-rscalendar-id/token`, overridable in the `[pass]` table of config.toml), and fall back to `~/.config/rscalendar/credentials.json` and `token_cache.json` when `pass` or the entry is missing. The code is in `src/pass.rs` and `src/auth.rs`.
+- Never write refreshed access tokens to pass: the store is git-tracked. Only a new authorization or a changed refresh token is written.
+- Never log secret values; messages may name the entry only.

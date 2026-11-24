@@ -3,7 +3,12 @@ use std::pin::Pin;
 
 use anyhow::{Context, Result};
 
-use crate::config::{Config, credentials_path, token_cache_path};
+use yup_oauth2::ApplicationSecret;
+
+use crate::config::{
+    Config, DEFAULT_PASS_OAUTH_CLIENT, DEFAULT_PASS_TOKEN, credentials_path, token_cache_path,
+};
+use crate::pass::{Entries, Pass, TokenBackend, choose_token_backend, load_secret};
 
 const CALENDAR_SCOPE: &str = "https://www.googleapis.com/auth/calendar";
 
@@ -21,6 +26,22 @@ impl yup_oauth2::authenticator_delegate::InstalledFlowDelegate for NoInteraction
     }
 }
 
+/// Read the OAuth client and decide where the token cache lives.
+///
+/// Both come from pass when the entries exist (see [`crate::pass`]) and fall
+/// back to the files under `~/.config/rscalendar` otherwise.
+pub async fn resolve(config: &Config) -> Result<(ApplicationSecret, TokenBackend)> {
+    let pass = Pass::new();
+    let entries = Entries::new(DEFAULT_PASS_OAUTH_CLIENT, DEFAULT_PASS_TOKEN, &config.pass);
+    let (secret, from_pass) = load_secret(&pass, &entries, || {
+        credentials_path().map_err(std::io::Error::other)
+    })
+    .await
+    .context("failed to read the OAuth client credentials")?;
+    let backend = choose_token_backend(&pass, &entries, from_pass, &token_cache_path()?);
+    Ok((secret, backend))
+}
+
 /// Build an authenticator that never starts a browser sign-in.
 ///
 /// A valid cached access token is used as is and an expired one is refreshed;
@@ -31,21 +52,23 @@ impl yup_oauth2::authenticator_delegate::InstalledFlowDelegate for NoInteraction
 /// ignores the delegate's refusal and waits forever for a browser callback,
 /// so every command hung once the refresh token expired.
 pub async fn noninteractive_authenticator(
-    credentials: &std::path::Path,
-    cache: &std::path::Path,
+    secret: ApplicationSecret,
+    backend: &TokenBackend,
 ) -> Result<yup_oauth2::authenticator::DefaultAuthenticator> {
-    let secret = yup_oauth2::read_application_secret(credentials)
-        .await
-        .context("failed to read credentials.json")?;
-    yup_oauth2::InstalledFlowAuthenticator::builder(
+    let builder = yup_oauth2::InstalledFlowAuthenticator::builder(
         secret,
         yup_oauth2::InstalledFlowReturnMethod::Interactive,
-    )
-    .persist_tokens_to_disk(cache)
-    .flow_delegate(Box::new(NoInteractionDelegate))
-    .build()
-    .await
-    .context("failed to build authenticator")
+    );
+    let builder = match (backend.pass_storage(), backend) {
+        (Some(storage), _) => builder.with_storage(Box::new(storage)),
+        (None, TokenBackend::File(path)) => builder.persist_tokens_to_disk(path),
+        (None, TokenBackend::Pass { .. }) => builder,
+    };
+    builder
+        .flow_delegate(Box::new(NoInteractionDelegate))
+        .build()
+        .await
+        .context("failed to build authenticator")
 }
 
 pub struct BrowserFlowDelegate;
@@ -66,23 +89,20 @@ impl yup_oauth2::authenticator_delegate::InstalledFlowDelegate for BrowserFlowDe
 }
 
 pub async fn cmd_auth(no_browser_flag: bool, force: bool, config: &Config) -> Result<()> {
-    if force {
-        let cache = token_cache_path()?;
-        if cache.exists() {
-            std::fs::remove_file(&cache)?;
-            eprintln!("Removed cached token at {}", cache.display());
-        }
+    let (secret, mut backend) = resolve(config).await?;
+    if force && backend.remove()? {
+        eprintln!("Removed cached token ({})", backend.describe());
     }
 
-    let secret = yup_oauth2::read_application_secret(credentials_path()?)
-        .await
-        .context("failed to read credentials.json")?;
-
-    let mut builder = yup_oauth2::InstalledFlowAuthenticator::builder(
+    let builder = yup_oauth2::InstalledFlowAuthenticator::builder(
         secret,
         yup_oauth2::InstalledFlowReturnMethod::HTTPRedirect,
-    )
-    .persist_tokens_to_disk(token_cache_path()?);
+    );
+    let mut builder = match (backend.pass_storage(), &backend) {
+        (Some(storage), _) => builder.with_storage(Box::new(storage)),
+        (None, TokenBackend::File(path)) => builder.persist_tokens_to_disk(path),
+        (None, TokenBackend::Pass { .. }) => builder,
+    };
 
     let no_browser = no_browser_flag || config.no_browser();
     if !no_browser {
@@ -101,7 +121,7 @@ pub async fn cmd_auth(no_browser_flag: bool, force: bool, config: &Config) -> Re
 
     eprintln!(
         "Authentication successful. Token cached to {}",
-        token_cache_path()?.display()
+        backend.describe()
     );
     Ok(())
 }
@@ -113,16 +133,16 @@ pub async fn cmd_auth(no_browser_flag: bool, force: bool, config: &Config) -> Re
 /// expired one is refreshed with the refresh token (which also counts as use
 /// of the OAuth client in Google's inactivity policy). A missing cache or a
 /// rejected refresh token is reported and exits with status 1.
-pub async fn cmd_auth_check_token() -> Result<()> {
-    let cache_path = token_cache_path()?;
-    if !cache_path.exists() {
+pub async fn cmd_auth_check_token(config: &Config) -> Result<()> {
+    let (secret, backend) = resolve(config).await?;
+    if !backend.exists() {
         eprintln!(
             "Token: MISSING ({}). Run 'rscalendar auth'.",
-            cache_path.display()
+            backend.describe()
         );
         std::process::exit(1);
     }
-    let auth = noninteractive_authenticator(&credentials_path()?, &cache_path).await?;
+    let auth = noninteractive_authenticator(secret, &backend).await?;
     match auth.token(&[CALENDAR_SCOPE]).await {
         Ok(token) => {
             match token.expiration_time() {
@@ -172,7 +192,11 @@ mod tests {
         )
         .unwrap();
 
-        let auth = noninteractive_authenticator(&credentials, &cache)
+        let secret = yup_oauth2::read_application_secret(&credentials)
+            .await
+            .unwrap();
+        let backend = TokenBackend::File(cache);
+        let auth = noninteractive_authenticator(secret, &backend)
             .await
             .unwrap();
         let result =

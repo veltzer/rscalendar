@@ -8,7 +8,7 @@ After installing rscalendar and placing your OAuth2 credentials, authenticate:
 rscalendar auth
 ```
 
-This opens your browser for Google OAuth2 consent. The token is cached at `~/.config/rscalendar/token_cache.json` for future use.
+This opens your browser for Google OAuth2 consent. The token is cached for future use in the pass entry `gcp/veltzer-rscalendar-id/token` when pass is set up, otherwise at `~/.config/rscalendar/token_cache.json`.
 
 If you're on a headless machine:
 

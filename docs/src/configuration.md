@@ -17,6 +17,22 @@ The config file is optional. If missing, built-in defaults are used. All config 
 | `calendar_name` | string | (none) | Default calendar name for all commands |
 | `no_browser` | boolean | `false` | Don't open browser during `auth` |
 
+## The `[pass]` Section
+
+Overrides the [pass](https://www.passwordstore.org/) entries that hold the OAuth
+client and the token cache (see [Authentication](authentication.md)). Both keys
+are optional.
+
+```toml
+[pass]
+oauth_client = "gcp/my-project/oauth-client"
+token = "gcp/my-project/token"
+```
+
+The defaults are `gcp/veltzer-rscalendar-id/oauth-client` and
+`gcp/veltzer-rscalendar-id/token`. When `pass` or the entry is missing, the
+files below are used.
+
 ## The `[check]` Section
 
 The `[check]` section defines required properties per event type. It is used by the `rscalendar check` command to validate that events have all expected properties.
@@ -63,5 +79,5 @@ rscalendar list --calendar-name "Work"
 | File | Purpose |
 |------|---------|
 | `~/.config/rscalendar/config.toml` | User preferences |
-| `~/.config/rscalendar/credentials.json` | OAuth2 client credentials |
-| `~/.config/rscalendar/token_cache.json` | Cached access/refresh tokens |
+| `~/.config/rscalendar/credentials.json` | OAuth2 client credentials (fallback when the pass entry is absent) |
+| `~/.config/rscalendar/token_cache.json` | Cached access/refresh tokens (fallback when the pass entry is absent) |

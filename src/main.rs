@@ -5,6 +5,7 @@ mod commands;
 mod config;
 mod helpers;
 mod models;
+mod pass;
 
 use anyhow::Result;
 use clap::{CommandFactory, Parser};
@@ -58,6 +59,12 @@ fn print_defconfig() {
 # type = [\"teaching\", \"working\", \"call\", \"meeting\"]
 # company = [\"Amdocs\", \"Intel\", \"Google\"]
 # course = [\"Linux Fundamentals\", \"Advanced Python\"]
+
+# pass(1) entries for the OAuth client JSON and the token cache; the files
+# in ~/.config/rscalendar are used when pass or the entry is missing
+# [pass]
+# oauth_client = \"gcp/veltzer-rscalendar-id/oauth-client\"
+# token = \"gcp/veltzer-rscalendar-id/token\"
 
 # Required properties per event type (used by 'check' command)
 # [check]
@@ -125,13 +132,13 @@ async fn main() -> Result<()> {
 
     if let Command::Auth(args) = &cli.command {
         match args.action {
-            Some(AuthAction::CheckToken) => auth::cmd_auth_check_token().await?,
+            Some(AuthAction::CheckToken) => auth::cmd_auth_check_token(&config).await?,
             None => auth::cmd_auth(args.no_browser, args.force, &config).await?,
         }
         return Ok(());
     }
 
-    let client = GoogleCalendarClient::from_cache().await?;
+    let client = GoogleCalendarClient::from_cache(&config).await?;
     let out = OutputOptions {
         show_builtin: cli.show_builtin,
         json: cli.json,

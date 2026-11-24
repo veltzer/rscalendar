@@ -7,8 +7,8 @@ use serde_json::{Map, Value, json};
 use tokio::time::{Duration, sleep};
 use urlencoding::encode;
 
-use crate::auth::noninteractive_authenticator;
-use crate::config::{Config, credentials_path, token_cache_path};
+use crate::auth::{noninteractive_authenticator, resolve};
+use crate::config::Config;
 use crate::models::{CalendarEvent, CalendarListEntry, CalendarListResponse, EventDateTime};
 
 pub const API_BASE: &str = "https://www.googleapis.com/calendar/v3";
@@ -21,14 +21,14 @@ pub struct GoogleCalendarClient {
 }
 
 impl GoogleCalendarClient {
-    pub async fn from_cache() -> Result<Self> {
-        let cache_path = token_cache_path()?;
-        if !cache_path.exists() {
+    pub async fn from_cache(config: &Config) -> Result<Self> {
+        let (secret, backend) = resolve(config).await?;
+        if !backend.exists() {
             eprintln!("Error: not authenticated. Run 'rscalendar auth' first.");
             std::process::exit(1);
         }
 
-        let auth = noninteractive_authenticator(&credentials_path()?, &cache_path).await?;
+        let auth = noninteractive_authenticator(secret, &backend).await?;
 
         let token = auth
             .token(&[CALENDAR_SCOPE])
