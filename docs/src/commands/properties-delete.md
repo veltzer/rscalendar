@@ -11,7 +11,7 @@ rscalendar properties delete --key <KEY> [OPTIONS]
 ## Options
 
 | Option | Required | Description |
-|--------|----------|-------------|
+| -------- | ---------- | ------------- |
 | `--key <KEY>` | Yes | Property key to delete |
 | `--calendar-name <NAME>` | No | Calendar name (default: from config) |
 | `--all` | No | Apply to all events without prompting |

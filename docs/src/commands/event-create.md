@@ -11,7 +11,7 @@ rscalendar event create --summary <TEXT> --start <TIME> --end <TIME> [OPTIONS]
 ## Options
 
 | Option | Required | Description |
-|--------|----------|-------------|
+| -------- | ---------- | ------------- |
 | `--summary <TEXT>` | Yes | Event title |
 | `--start <TIME>` | Yes | Start time (RFC3339 or YYYY-MM-DD) |
 | `--end <TIME>` | Yes | End time (RFC3339 or YYYY-MM-DD) |

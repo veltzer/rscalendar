@@ -3,7 +3,7 @@
 rscalendar provides the following commands:
 
 | Command | Description |
-|---------|-------------|
+| --------- | ------------- |
 | [list-calendars](commands/list-calendars.md) | List all accessible calendars |
 | [list](commands/list.md) | List all events for a calendar |
 | [event create](commands/event-create.md) | Create a new event |
@@ -24,7 +24,7 @@ rscalendar provides the following commands:
 ## Global Flags
 
 | Flag | Description |
-|------|-------------|
+| ------ | ------------- |
 | `--show-builtin` | Show "(built-in)" labels on standard Google Calendar fields |
 | `--json` | Output as JSON for processing with tools like `jq` |
 

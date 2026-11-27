@@ -11,7 +11,7 @@ rscalendar list [OPTIONS]
 ## Options
 
 | Option | Default | Description |
-|--------|---------|-------------|
+| -------- | --------- | ------------- |
 | `--calendar-name <NAME>` | from config | Calendar name to query |
 
 ## Examples

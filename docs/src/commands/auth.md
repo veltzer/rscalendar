@@ -11,7 +11,7 @@ rscalendar auth [OPTIONS]
 ## Options
 
 | Option | Description |
-|--------|-------------|
+| -------- | ------------- |
 | `--no-browser` | Print the authorization URL instead of opening the browser |
 | `--force` | Remove cached token and force re-authentication |
 

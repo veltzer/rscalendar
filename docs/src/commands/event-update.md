@@ -11,7 +11,7 @@ rscalendar event update --event-id <ID> [OPTIONS]
 ## Options
 
 | Option | Required | Description |
-|--------|----------|-------------|
+| -------- | ---------- | ------------- |
 | `--event-id <ID>` | Yes | Event ID to update |
 | `--calendar-id <ID>` | No | Calendar ID (default: `primary`) |
 | `--summary <TEXT>` | No | New event title |

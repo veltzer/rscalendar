@@ -11,7 +11,7 @@ rscalendar event delete --event-id <ID> [OPTIONS]
 ## Options
 
 | Option | Required | Description |
-|--------|----------|-------------|
+| -------- | ---------- | ------------- |
 | `--event-id <ID>` | Yes | Event ID to delete |
 | `--calendar-id <ID>` | No | Calendar ID (default: `primary`) |
 

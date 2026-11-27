@@ -14,7 +14,7 @@ rscalendar looks in [pass](https://www.passwordstore.org/) first and falls back
 to plain files when `pass` is not installed or the entry does not exist.
 
 | What | pass entry (default) | Fallback file |
-|------|----------------------|---------------|
+| ------ | ---------------------- | --------------- |
 | OAuth2 client (the JSON from Google Cloud Console) | `gcp/veltzer-rscalendar-id/oauth-client` | `~/.config/rscalendar/credentials.json` |
 | Token cache (access/refresh tokens) | `gcp/veltzer-rscalendar-id/token` | `~/.config/rscalendar/token_cache.json` |
 

@@ -11,7 +11,7 @@ rscalendar move-events --source <NAME> --target <NAME> [OPTIONS]
 ## Options
 
 | Option | Required | Description |
-|--------|----------|-------------|
+| -------- | ---------- | ------------- |
 | `--source <NAME>` | Yes | Source calendar name to move events from |
 | `--target <NAME>` | Yes | Target calendar name to move events into |
 | `--interactive` | No | Prompt for each event: y=move, n=skip, q=quit |

@@ -13,7 +13,7 @@ The config file is optional. If missing, built-in defaults are used. All config 
 ## Options
 
 | Key | Type | Default | Description |
-|-----|------|---------|-------------|
+| ----- | ------ | --------- | ------------- |
 | `calendar_name` | string | (none) | Default calendar name for all commands |
 | `no_browser` | boolean | `false` | Don't open browser during `auth` |
 
@@ -77,7 +77,7 @@ rscalendar list --calendar-name "Work"
 ## Files Overview
 
 | File | Purpose |
-|------|---------|
+| ------ | --------- |
 | `~/.config/rscalendar/config.toml` | User preferences |
 | `~/.config/rscalendar/credentials.json` | OAuth2 client credentials (fallback when the pass entry is absent) |
 | `~/.config/rscalendar/token_cache.json` | Cached access/refresh tokens (fallback when the pass entry is absent) |

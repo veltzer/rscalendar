@@ -11,7 +11,7 @@ rscalendar properties rename --from <OLD_KEY> --to <NEW_KEY> [OPTIONS]
 ## Options
 
 | Option | Required | Description |
-|--------|----------|-------------|
+| -------- | ---------- | ------------- |
 | `--from <OLD_KEY>` | Yes | Current property key name |
 | `--to <NEW_KEY>` | Yes | New property key name |
 | `--calendar-name <NAME>` | No | Calendar name (default: from config) |

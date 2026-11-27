@@ -11,7 +11,7 @@ rscalendar properties add [OPTIONS]
 ## Options
 
 | Option | Required | Description |
-|--------|----------|-------------|
+| -------- | ---------- | ------------- |
 | `--calendar-name <NAME>` | No | Calendar name (default: from config) |
 | `--key <KEY>` | No | Property key to set (must be in config). If omitted, prompts for all missing properties |
 | `--value <VALUE>` | No | Property value (must be allowed for the key). Requires `--key` |

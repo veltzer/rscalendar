@@ -11,7 +11,7 @@ rscalendar properties edit [OPTIONS]
 ## Options
 
 | Option | Required | Description |
-|--------|----------|-------------|
+| -------- | ---------- | ------------- |
 | `--calendar-name <NAME>` | No | Calendar name (default: from config) |
 
 ## How It Works
