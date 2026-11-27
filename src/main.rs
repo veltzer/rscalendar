@@ -1,3 +1,5 @@
+//! rscalendar: Manage your Google Calendar.
+
 mod auth;
 mod cli;
 mod client;
