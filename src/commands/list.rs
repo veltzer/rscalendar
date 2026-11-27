@@ -19,13 +19,7 @@ pub fn parse_filter_date(s: &str) -> Result<chrono::DateTime<chrono::FixedOffset
     }
     let nd = NaiveDate::parse_from_str(s, "%Y-%m-%d")
         .with_context(|| format!("cannot parse '{s}' as RFC3339 or YYYY-MM-DD"))?;
-    let ndt = nd.and_hms_opt(0, 0, 0).unwrap();
-    Ok(
-        chrono::DateTime::<chrono::FixedOffset>::from_naive_utc_and_offset(
-            ndt,
-            chrono::FixedOffset::east_opt(0).unwrap(),
-        ),
-    )
+    Ok(nd.and_time(chrono::NaiveTime::MIN).and_utc().fixed_offset())
 }
 
 /// Extract an event's start time as a `DateTime` for comparison.
@@ -40,13 +34,7 @@ pub fn event_start_to_datetime(
     if let Some(ref d_str) = edt.date
         && let Ok(nd) = NaiveDate::parse_from_str(d_str, "%Y-%m-%d")
     {
-        let ndt = nd.and_hms_opt(0, 0, 0).unwrap();
-        return Some(
-            chrono::DateTime::<chrono::FixedOffset>::from_naive_utc_and_offset(
-                ndt,
-                chrono::FixedOffset::east_opt(0).unwrap(),
-            ),
-        );
+        return Some(nd.and_time(chrono::NaiveTime::MIN).and_utc().fixed_offset());
     }
     None
 }

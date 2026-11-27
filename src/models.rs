@@ -120,7 +120,7 @@ impl EventDateTime {
 
 pub fn print_event(event: &CalendarEvent, show_builtin: bool, json_output: bool) {
     if json_output {
-        println!("{}", serde_json::to_string(&event.to_json()).unwrap());
+        println!("{}", event.to_json());
         return;
     }
 
@@ -182,7 +182,7 @@ pub fn print_calendar(cal: &CalendarListEntry, json_output: bool) {
         if let Some(desc) = &cal.description {
             obj.insert("description".to_string(), json!(desc));
         }
-        println!("{}", serde_json::to_string(&Value::Object(obj)).unwrap());
+        println!("{}", Value::Object(obj));
         return;
     }
 
